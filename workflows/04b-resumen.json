@@ -1,0 +1,141 @@
+{
+  "name": "04b - Resumen diario",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "name": "Cada ma\u00f1ana a las 8",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "/vault/*.md",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "name": "Leer el vault",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -180,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "data",
+        "destinationKey": "contenido",
+        "options": {
+          "destinationKey": "contenido"
+        }
+      },
+      "name": "Extraer el texto",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        40,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function leerVault() {\n  // El texto lo resuelve el nodo \"Extraer el texto\", pero ese nodo se queda\n  // SOLO con la clave que le pides y tira el resto del json, el nombre del\n  // fichero incluido. Hay que ir a buscarlo al nodo de lectura, que saca los\n  // items en el mismo orden, y emparejarlos por posicion.\n  const leidos = $('Leer el vault').all();\n  const ficheros = [];\n  $input.all().forEach((item, i) => {\n    const j = item.json ?? {};\n    if (typeof j.contenido !== 'string' || !j.contenido) return;\n    const src = leidos[i] ?? {};\n    const nombre = src.json?.fileName ?? src.binary?.data?.fileName;\n    // Sin nombre no se puede ni marcar el fichero ni citarlo: mejor saltarlo\n    // que escribir en un sitio inventado.\n    if (!nombre) return;\n    ficheros.push({ nombre, texto: j.contenido });\n  });\n  return ficheros;\n}\n\nfunction frontmatter(texto) {\n  // Un parser de YAML de tres lineas. Solo hay que leer lo que escribe\n  // \"Componer nota\", que son pares clave: valor planos.\n  const m = texto.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);\n  if (!m) return {};\n  const campos = {};\n  for (const linea of m[1].split(/\\r?\\n/)) {\n    const i = linea.indexOf(':');\n    if (i === -1) continue;\n    const clave = linea.slice(0, i).trim();\n    let valor = linea.slice(i + 1).trim();\n    if (valor.startsWith('\"') && valor.endsWith('\"')) {\n      valor = valor.slice(1, -1).replace(/\\\\\"/g, '\"');\n    }\n    campos[clave] = valor;\n  }\n  return campos;\n}\n\nconst DIAS = ['lunes', 'martes', 'mi\u00e9rcoles', 'jueves', 'viernes', 's\u00e1bado', 'domingo'];\nconst MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',\n               'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];\n\nfunction chatPermitido() {\n  // En un chat privado el chat_id es tu propio user id, asi que no hace falta\n  // guardarlo en ningun sitio: ya esta en el entorno desde la fase 1.\n  const c = $env.TELEGRAM_ALLOWED_USER_ID;\n  if (!c) throw new Error('TELEGRAM_ALLOWED_USER_ID no esta definido en el contenedor de n8n');\n  return Number(c);\n}\n\nfunction marcarAvisado(texto) {\n  if (/^avisado:/m.test(texto)) {\n    return texto.replace(/^avisado:.*$/m, 'avisado: true');\n  }\n  // Nota anterior a la fase 4, sin el campo. Si no se lo metemos, no hay forma\n  // de marcarla y te avisaria cada quince minutos para siempre.\n  return texto.replace(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/,\n    (m, cuerpo) => '---\\n' + cuerpo + '\\navisado: true\\n---');\n}\n\n// Modo: Run Once for All Items.\n// El parte de las 8:00. Un solo mensaje, siempre: un resumen que calla cuando\n// no hay nada no se distingue de un bot roto.\n\nconst chat = chatPermitido();\nconst ahora = DateTime.now().setZone('Europe/Madrid');\nconst inicioHoy = ahora.startOf('day');\nconst finHoy = ahora.endOf('day');\nconst finSemana = ahora.plus({ days: 7 }).endOf('day');\n\nconst eventos = [];\nfor (const f of leerVault()) {\n  const fm = frontmatter(f.texto);\n  if (!fm.cuando) continue;\n  const d = DateTime.fromISO(fm.cuando, { zone: 'Europe/Madrid' });\n  if (!d.isValid || d < inicioHoy || d > finSemana) continue;\n  eventos.push({ d, titulo: fm.titulo || f.nombre.replace(/\\.md$/, '') });\n}\n\neventos.sort((a, b) => a.d.toMillis() - b.d.toMillis());\n\nconst hoy = eventos.filter((e) => e.d <= finHoy);\nconst resto = eventos.filter((e) => e.d > finHoy);\n\nconst partes = ['Buenos d\u00edas. Hoy es ' + DIAS[ahora.weekday - 1] + ' ' +\n  ahora.day + ' de ' + MESES[ahora.month - 1] + '.'];\n\npartes.push('');\nif (hoy.length) {\n  partes.push('Hoy:');\n  for (const e of hoy) partes.push('- ' + e.d.toFormat('HH:mm') + '  ' + e.titulo);\n} else {\n  partes.push('Hoy no tienes nada apuntado.');\n}\n\nif (resto.length) {\n  partes.push('');\n  partes.push('Esta semana:');\n  for (const e of resto) {\n    partes.push('- ' + DIAS[e.d.weekday - 1] + ' ' + e.d.day + ', ' +\n      e.d.toFormat('HH:mm') + '  ' + e.titulo);\n  }\n}\n\nreturn [{ json: { chat_id: chat, texto: partes.join('\\n') } }];\n"
+      },
+      "name": "Montar el resumen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $json.chat_id, text: $json.texto }) }}",
+        "options": {}
+      },
+      "name": "Mandar el resumen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Cada ma\u00f1ana a las 8": {
+      "main": [
+        [
+          {
+            "node": "Leer el vault",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer el vault": {
+      "main": [
+        [
+          {
+            "node": "Extraer el texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer el texto": {
+      "main": [
+        [
+          {
+            "node": "Montar el resumen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar el resumen": {
+      "main": [
+        [
+          {
+            "node": "Mandar el resumen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Madrid"
+  },
+  "pinData": {}
+}

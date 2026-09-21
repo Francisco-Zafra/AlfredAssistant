@@ -77,7 +77,8 @@ Telegram (long polling, llega al instante)
    confirmación por Telegram
 ```
 
-Y en paralelo, cada 15 minutos, un workflow mira los eventos próximos y avisa.
+Y en paralelo, cada 15 minutos un workflow mira los eventos próximos y avisa, y
+a las 8:00 otro te manda el parte del día.
 
 Da igual dictar que escribir: el mensaje escrito se salta Whisper y entra en el
 mismo sitio, solo que el prompt sabe que ese texto no trae ruido de transcripción
@@ -138,6 +139,37 @@ que la nota llegue al disco y que la respuesta salga, aunque se quede sin indexa
 El precio es que no te enteras. Si el bot dice que no encuentra algo que juras haber
 apuntado, reindexa antes de dar por rota la memoria.
 
+## Los avisos
+
+Dos workflows, los dos con Schedule Trigger, los dos hay que **activarlos a mano**
+después de importarlos o no se disparan nunca.
+
+**04a - Avisos**, cada 15 minutos. Busca notas con `cuando` relleno y `avisado: false`
+en una ventana que va de 2 horas antes de ahora a 1 hora después, te manda el aviso y
+marca `avisado: true` en el `.md`.
+
+La ventana hacia atrás no es un descuido. Si el bot ha estado parado media hora, los
+eventos que cayeron en ese hueco te llegan tarde en vez de no llegar; te lo dice con
+un *"se te ha pasado hace 40 min"* en vez de fingir que es un aviso normal. Las dos
+constantes están arriba del nodo *Buscar eventos que tocan* y se tocan ahí.
+
+Avisar y marcar van por **ramas paralelas**, no en cadena. Si la escritura del `.md`
+falla, te vuelve a avisar dentro de 15 minutos. Es el fallo que quieres: el contrario,
+marcar y no avisar, te deja sin enterarte y sin rastro.
+
+Ojo a que el filtro va por `cuando`, no por `tipo`. Una tarea con fecha —*"recuérdame
+mañana comprar pan"*— también avisa, y eso es justo lo que quieres de esa frase. Es la
+misma regla que usa la agenda del agente, y la que ya prometía este README: los
+eventos son notas con `cuando` relleno.
+
+**04b - Resumen diario**, a las 8:00. Los eventos de hoy y, debajo, los de los
+próximos siete días. Manda el mensaje aunque no haya nada: un resumen que calla no se
+distingue de un bot roto.
+
+No lleva tareas sin fecha. Podría, pero no hay forma de marcar una tarea como hecha,
+así que la lista solo crecería hasta volverse ruido. Eso pide un botón de "hecho", y
+eso es otra fase.
+
 ## Decisiones y por qué
 
 **Long polling en vez de webhooks.** Nada abierto al exterior, nada de dominio ni
@@ -182,7 +214,8 @@ No intentes montarlo entero de golpe. Cada fase funciona sola y ya es útil.
    Agent que las usa. Aquí es cuando deja de ser una libreta y pasa a ser un
    secretario: ya puedes preguntarle. Entra también la entrada por texto, que hasta
    ahora se perdía por una rama sin conectar.
-4. **Los avisos.** Recordatorios y resumen diario de las 8:00.
+4. **Los avisos.** ✅ Recordatorios de los eventos que se acercan, con repesca de
+   los que se escaparon si el bot estuvo parado, y el parte de las 8:00.
 
 Google Calendar no está en ninguna fase todavía. Es una decisión aplazada, no un
 olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
@@ -249,13 +282,40 @@ olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
 - Si el clasificador se equivoca y toma tu pregunta por un dictado, la pregunta
   acaba guardada como nota en el vault. Se borra y ya, pero conviene saberlo antes
   de encontrarte "¿qué tengo mañana?" convertido en una nota.
-- El nodo de lectura de ficheros con comodín no devuelve lo mismo en todas las
-  versiones de n8n: unas sacan un item por fichero con la propiedad binaria `data`,
-  otras un solo item con `data0`, `data1`... Los nodos que leen el vault cubren las
-  dos formas a propósito; si los tocas, no des por hecha ninguna.
+- **No leas el binario a mano.** n8n puede guardar el contenido de un fichero en
+  disco en vez de dentro del item, y lo decide él (`binaryMode: "separate"` aparece
+  solo en los ajustes del workflow). Cuando lo hace, `item.binary.data.data` no es
+  el fichero en base64: es la cadena literal `filesystem-v2`, y el contenido vive en
+  `binary_data/` bajo un id. Un `Buffer.from(..., 'base64')` sobre eso no falla, que
+  es lo peor: devuelve basura en silencio. Por eso los workflows que leen el vault
+  pasan por un nodo **Extract From File**, que resuelve los dos modos. Costó una
+  agenda que decía "no hay ningún evento" con el evento guardado al lado.
+- Y su gemela: **Extract From File se queda solo con la clave que le pides y tira el
+  resto del json**, el `fileName` incluido. Si necesitas saber de qué fichero venía
+  cada texto —y lo necesitas en cuanto quieras escribir en él— hay que ir a buscarlo
+  al nodo de lectura y emparejar por posición, que el orden de los items se respeta.
+  Sin eso, `avisado: true` acaba en un `/vault/sin-nombre.md` y el aviso se repite
+  cada quince minutos para siempre.
 - Los mensajes escritos entran por la rama **falsa** de *Es nota de voz*, que hasta
   la fase 3 no iba a ningún sitio. Si la desconectas, el bot se queda mudo ante todo
   lo que no sea audio, y sin error: el mensaje simplemente se evapora.
+
+- Los dos workflows de la fase 4 llevan **Schedule Trigger**, así que no hacen nada
+  hasta que los activas con el toggle. Importarlos no basta, y no avisan de que no
+  están avisando.
+- La marca `avisado: true` se escribe sobre el texto que se leyó en esa misma pasada,
+  no releyendo el fichero. Si editas esa nota a mano en el mismo instante, tu edición
+  se pierde. La ventana es de milisegundos y el vault es de un solo usuario, pero está
+  ahí.
+- Las notas de antes de la fase 4 pueden no tener el campo `avisado`. Al marcarlas se
+  les añade al frontmatter; sin eso, no habría dónde dejar la marca y te avisarían
+  cada quince minutos para siempre.
+- El `chat_id` de los avisos sale de `TELEGRAM_ALLOWED_USER_ID`, porque en un chat
+  privado el chat id y tu user id son el mismo número. Si algún día hablas con el bot
+  desde un grupo, los avisos seguirán llegando a tu chat privado.
+- Marcar `avisado` cambia el `.md` y Qdrant no se entera, pero da igual: lo que se
+  indexa es el título y el cuerpo, y el frontmatter no entra. No hace falta reindexar
+  después de un aviso.
 
 ## Estructura
 
@@ -268,7 +328,9 @@ secretario/
 │  ├─ 02a-escucha.json      # el bucle de long polling
 │  ├─ 02b-secretario.json   # transcribir, clasificar, guardar, contestar
 │  ├─ 03a-agenda.json       # herramienta del agente: los eventos del vault
-│  └─ 03b-reindexar.json    # rehace la colección de qdrant desde el vault
+│  ├─ 03b-reindexar.json    # rehace la colección de qdrant desde el vault
+│  ├─ 04a-avisos.json       # cada 15 min, avisa de lo que se acerca
+│  └─ 04b-resumen.json      # el parte de las 8:00
 ├─ prompts/       # system prompts en ficheros aparte, para versionarlos
 │  ├─ 01-limpiar-transcripcion.md
 │  ├─ 02-clasificar.md
