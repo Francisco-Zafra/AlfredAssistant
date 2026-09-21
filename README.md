@@ -52,7 +52,7 @@ y no son alcanzables desde fuera del host.
 ## Cómo fluye
 
 ```
-Telegram (polling cada 5s)
+Telegram (long polling, llega al instante)
         │
         ├── nota de voz → getFile → whisper:9000/asr → texto crudo
         └── texto → tal cual
@@ -101,8 +101,15 @@ modelo interprete mal algo importante, querrás ver qué dijiste de verdad.
 
 ## Decisiones y por qué
 
-**Polling en vez de webhooks.** Nada abierto al exterior, nada de dominio ni
-certificados. Detalles y código en [docs/telegram-polling.md](docs/telegram-polling.md).
+**Long polling en vez de webhooks.** Nada abierto al exterior, nada de dominio ni
+certificados, y aun así el mensaje se procesa en cuanto lo mandas: la petición a
+Telegram se queda esperando hasta 50 segundos y vuelve en el instante en que llega
+algo. El workflow se encadena consigo mismo para que no haya huecos, con un Schedule
+de rescate por si la cadena se rompe. Detalles en
+[docs/telegram-polling.md](docs/telegram-polling.md).
+
+El webhook se descartó porque exige que algo tuyo sea alcanzable desde internet, por
+puerto abierto o por túnel, y eso choca con la premisa de no exponer nada.
 
 **Gemini para razonar, el resto local.** Los modelos pequeños en CPU fallan al elegir
 herramienta lo suficiente como para que acabes desconfiando del bot, y este Xeon no
@@ -127,8 +134,11 @@ No intentes montarlo entero de golpe. Cada fase funciona sola y ya es útil.
 
 1. **La libreta.** Polling → Whisper → limpiar con Gemini → guardar `.md` → responder
    "apuntado". Con esto solo, ya estás usando el bot todos los días.
-2. **El clasificador.** Entra el AI Agent y empieza a distinguir nota de tarea de
-   evento. Que confirme siempre antes de guardar un evento: Whisper se come fechas.
+2. **El clasificador.** Distingue nota de tarea de evento, resuelve fechas
+   relativas ("mañana", "en tres días", "en 1h") y confirma con botones antes de
+   guardar un evento: Whisper se come fechas. Sin AI Agent todavía, es la misma
+   llamada al modelo con un prompt más rico; las herramientas hacen falta en la
+   fase 3, no aquí.
 3. **La memoria.** Qdrant, indexación y la herramienta de búsqueda. Aquí es cuando
    deja de ser una libreta y pasa a ser un secretario.
 4. **Los avisos.** Recordatorios y resumen diario de las 8:00.
@@ -153,6 +163,24 @@ No intentes montarlo entero de golpe. Cada fase funciona sola y ya es útil.
 - `$getWorkflowStaticData` solo se guarda en ejecuciones de producción. Si pruebas el
   polling con *Execute Workflow*, el offset nunca avanza y cada ejecución reprocesa
   todo el backlog. Actívalo con el toggle para probarlo de verdad.
+- El tier gratuito de Gemini tiene tope **diario** por modelo y cada nota gasta una
+  petición. Cuando se agota, el workflow tira de OpenRouter; si ese también falla,
+  guarda la transcripción cruda con `revisar: true` en el frontmatter y te avisa por
+  Telegram con la hora a la que vuelve la cuota. Para repescarlas:
+  `grep -rl 'revisar: true' vault/`.
+- Un nodo **HTTP Request reemplaza el json del item** con la respuesta del servidor.
+  Si un nodo posterior necesita un campo que venía de antes, o lo lees con
+  `$('Nodo anterior').item.json.campo`, o sacas el HTTP de la ruta principal y lo
+  cuelgas como rama lateral. Los nodos que leen un campo del item actual, como
+  *Convert to File*, no tienen la primera salida: esos exigen lo segundo.
+- Los dos nodos *Execute Workflow* de `02a` llevan el id del workflow destino, y ese
+  id lo genera n8n al importar. Vienen con `PEGA_AQUI_EL_ID_...`: si no los rellenas,
+  la cadena no arranca y el bot no contesta.
+- Si la cadena de long polling se corta, el Schedule de rescate tarda entre dos y tres
+  minutos en revivirla. Es el precio de no arrancar dos cadenas a la vez.
+- Solo hay **una** confirmación pendiente a la vez, guardada en `staticData`. Si
+  dictas dos eventos seguidos sin contestar al primero, los botones del primero
+  quedan caducados y te lo dice al pulsarlos. Caducan también a los 30 minutos.
 - Whisper `small` con int8 se come sobre 2 GB mientras transcribe. Es el pico de RAM
   del stack.
 - Al meter fechas relativas, pásale al prompt la fecha y hora actuales. Si no, el
@@ -165,6 +193,9 @@ secretario/
 ├─ docker-compose.yml
 ├─ .env.example
 ├─ workflows/     # los JSON exportados de n8n
+│  ├─ 01-libreta.json       # fase 1, polling simple
+│  ├─ 02a-escucha.json      # el bucle de long polling
+│  └─ 02b-secretario.json   # transcribir, clasificar, guardar
 ├─ prompts/       # system prompts en ficheros aparte, para versionarlos
 ├─ scripts/       # reindexar el vault en qdrant, backups
 ├─ docs/

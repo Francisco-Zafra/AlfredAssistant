@@ -4,9 +4,13 @@ El nodo **Telegram Trigger** de n8n funciona por webhook: Telegram llama a una U
 pública tuya con HTTPS y certificado válido. Como todo esto vive detrás de la VPN y
 no hay nada expuesto, ese camino está cerrado.
 
-La alternativa es **polling**: n8n le pregunta a Telegram cada pocos segundos si hay
-mensajes nuevos. Solo hay tráfico saliente, así que no hace falta dominio, ni
-certificado, ni reenviar puertos, ni que tu IP pública sea estable.
+La alternativa es **long polling**: n8n abre una petición a Telegram y la deja
+colgada hasta 50 segundos; Telegram responde en el instante en que llega un mensaje.
+Solo hay tráfico saliente, así que no hace falta dominio, ni certificado, ni reenviar
+puertos, ni que tu IP pública sea estable, y la latencia es prácticamente cero.
+
+Se descartó el webhook porque obliga a que algo tuyo sea alcanzable desde internet
+(puerto abierto o túnel), y esto es la única forma de tener entrega inmediata sin eso.
 
 ## Antes de empezar
 
@@ -17,100 +21,69 @@ porque `getUpdates` y los webhooks son excluyentes. Una sola vez, desde cualquie
 curl "https://api.telegram.org/bot<TU_TOKEN>/deleteWebhook"
 ```
 
-## Los nodos
+## Cómo se mantiene viva la petición
 
-### 1. Schedule Trigger
+El Schedule Trigger de n8n no sirve para long polling: dispara por reloj sin esperar a
+que termine la ejecución anterior, así que a 50 segundos de espera tendrías dos
+`getUpdates` solapados y Telegram devuelve 409.
 
-Intervalo: cada **5 segundos**. Son unas 17.000 peticiones al día, que a Telegram le
-dan igual en un bot personal. Lo que sí cuesta es el historial de ejecuciones de n8n:
-ver la poda en `docker-compose.yml`.
+La solución es **encadenar el workflow consigo mismo**. `02a - Escucha` termina
+llamándose a sí mismo con *Execute Workflow*, sin esperar respuesta: en cuanto un poll
+acaba, arranca el siguiente. Sin huecos.
 
-Lo técnicamente mejor sería *long polling* (`timeout=25`, la petición se queda
-esperando y vuelve en cuanto hay mensaje). No se usa aquí porque el Schedule Trigger
-de n8n no espera a que termine la ejecución anterior: dos `getUpdates` solapados
-sobre el mismo bot hacen que Telegram devuelva 409 y se corte uno de los dos.
-
-### 2. Code — "leer offset"
-
-Modo: *Run Once for All Items*.
-
-```js
-// El offset marca el último update ya procesado. Vive en el almacén
-// estático del workflow, así que sobrevive a reinicios de n8n.
-const estado = $getWorkflowStaticData('global');
-return [{ json: { offset: estado.telegramOffset ?? 0 } }];
+```
+Arranque en cadena ─┐
+                    ├─> Leer offset -> getUpdates (timeout=50) -> Avanzar offset ─┬─> Volver a escuchar ──┐
+Rescate 1 min ──────┘                                                             │                       │
+  └─ ¿Se ha parado? ─┘                                                            └─> Repartir -> Encolar │
+                                                                                                          │
+   └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 3. HTTP Request — "getUpdates"
+### El offset NO puede salir del almacén estático
 
-- Método: `GET`
-- URL: `https://api.telegram.org/bot<TU_TOKEN>/getUpdates`
-  (mejor: guarda el token como credencial o variable y usa una expresión)
-- Query parameters:
-  - `offset` → `={{ $json.offset }}`
-  - `timeout` → `0`
-  - `allowed_updates` → `["message"]`
+n8n guarda `staticData` **al terminar** la ejecución. El siguiente eslabón de la
+cadena arranca antes de eso, así que si leyera el offset de ahí se encontraría el
+valor viejo y volvería a procesar los mismos mensajes.
 
-### 4. Code — "procesar updates"
+Por eso `Avanzar offset` mete el offset nuevo en su salida y la rellamada se lo pasa
+como dato de entrada. `Leer offset` usa lo que le llega y solo cae al almacén estático
+cuando no le llega nada, que es el caso del rescate.
 
-Modo: *Run Once for All Items*.
+### El Schedule de rescate
 
-```js
-const ALLOWED_USER_ID = 0; // <-- pon aquí tu id numérico de Telegram
+Si la cadena se rompe —un fallo no capturado, un reinicio a destiempo— el bot se queda
+mudo para siempre. Un Schedule cada minuto la revive, pero solo si hace falta:
+`Avanzar offset` deja un `ultimoLatido` en el almacén estático y el nodo de rescate no
+hace nada si el latido tiene menos de dos minutos. Sin esa guarda arrancarías una
+segunda cadena y volveríamos al 409.
 
-const estado = $getWorkflowStaticData('global');
-const respuesta = $input.first().json;
+Si por lo que sea acabaran corriendo dos cadenas, Telegram devuelve 409 en una de
+ellas, esa ejecución muere y el sistema se queda con una sola. Se arregla solo, pero
+lo verás en el historial de errores.
 
-if (!respuesta.ok || !respuesta.result || respuesta.result.length === 0) {
-  return [];
-}
+### Los dos workflows
 
-const updates = respuesta.result;
+`02a - Escucha` solo lee y reparte. `02b - Secretario` hace el trabajo pesado
+(descargar, transcribir, clasificar, guardar) y se llama con *Execute Workflow* sin
+esperar respuesta, así que una nota de un minuto transcribiéndose no bloquea la
+escucha.
 
-// Avanzamos el offset ANTES de procesar. Ver la nota de abajo sobre el
-// compromiso que esto implica.
-estado.telegramOffset = Math.max(...updates.map(u => u.update_id)) + 1;
-
-const salida = [];
-
-for (const u of updates) {
-  const msg = u.message;
-  if (!msg) continue;
-
-  // Puerta de entrada: cualquier otro que encuentre el bot se queda fuera.
-  if (msg.from?.id !== ALLOWED_USER_ID) continue;
-
-  salida.push({
-    json: {
-      update_id: u.update_id,
-      chat_id: msg.chat.id,
-      message_id: msg.message_id,
-      fecha: new Date(msg.date * 1000).toISOString(),
-      tipo: msg.voice ? 'voz' : (msg.text ? 'texto' : 'otro'),
-      texto: msg.text ?? null,
-      // file_id se usa después con getFile para descargar el audio
-      voice_file_id: msg.voice?.file_id ?? null,
-      voice_duracion: msg.voice?.duration ?? null,
-    },
-  });
-}
-
-return salida;
-```
+Al importarlos hay que rellenar a mano dos campos `workflowId`, porque los ids los
+genera n8n al importar: la rellamada de `02a` apunta a sí mismo y el nodo de encolar
+apunta a `02b`. Vienen con `PEGA_AQUI_EL_ID_...` para que no se te pasen.
 
 ## El compromiso a tener en cuenta
 
-El offset se avanza nada más recibir los mensajes, no al terminar de procesarlos. Es
-lo que evita que un poll que llega mientras se transcribe un audio largo vuelva a
-coger el mismo mensaje y lo guarde dos veces.
+El offset se avanza nada más recibir los mensajes, no al terminar de procesarlos.
 
-El precio es que si n8n se cae a mitad de procesar una nota, ese mensaje se pierde
+El precio es que si n8n se cae entre el reparto y el guardado, ese mensaje se pierde
 sin quedar registrado. Para uso personal es asumible, y el propio Telegram te sirve
 de copia: el audio sigue en el chat.
 
-Si algún día te molesta, la solución limpia es partirlo en dos workflows. El de
-polling solo lee y encola; un segundo workflow, llamado con **Execute Workflow**,
-hace el trabajo pesado y puede reintentar por su cuenta.
+Ojo con una consecuencia del acuse de recibo: cuando pides `offset=N`, Telegram borra
+de su cola todos los updates con id menor que N. Una vez confirmados desaparecen de su
+lado, así que reimportar el workflow y empezar con el offset a cero no revive nada.
 
 ## Descargar una nota de voz
 
