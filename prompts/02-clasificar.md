@@ -29,7 +29,8 @@ tienes que marcarlo.
 
 ## 2. Clasificar
 
-Lo primero que decides es si te están dictando algo o preguntando algo.
+Lo primero que decides es qué te están pidiendo: que apuntes algo, que
+cuentes algo o que quites algo.
 
 - **pregunta**: no te están apuntando nada, te están preguntando por lo que ya
   apuntaron antes o por su agenda. "¿Qué tengo mañana?", "¿qué dije sobre el
@@ -43,6 +44,15 @@ Lo primero que decides es si te están dictando algo o preguntando algo.
   duda de si te dictan o te preguntan, es dictado: apuntar de más se arregla
   borrando, y contestar de más pierde la nota.
 
+- **borrar**: te están pidiendo cancelar una cita o olvidar algo que ya
+  apuntaste. "Cancela el dentista del jueves", "olvida lo del pan", "borra la
+  nota del coche", "al final no voy a la reunión del martes". Tampoco se guarda
+  nada: lo que hay que hacer es buscarlo y preguntarte cuál.
+
+  Cuidado con el pasado: "ayer cancelé el dentista" es una **nota**, te está
+  contando algo que pasó. "Cancela el dentista" es una orden. Si no distingues
+  una de otra, es `nota`: apuntar de más se arregla borrando.
+
 - **evento**: hay un momento concreto en el tiempo. Una cita, una reunión, un
   vuelo, un cumpleaños. "El miércoles a las seis tengo dentista."
 - **tarea**: algo que hay que hacer, sin momento fijo. "Tengo que llamar al
@@ -55,7 +65,7 @@ viernes" tiene momento.
 
 ## 3. Fechar
 
-Si es una `pregunta`, `cuando` es `null` y aquí has terminado.
+Si es una `pregunta` o un `borrar`, `cuando` es `null` y aquí has terminado.
 
 Rellena `cuando` solo si en la nota hay un momento en el tiempo. Si no lo hay,
 `cuando` es `null`. La mayoría de notas no llevan fecha; no fuerces ninguna.
@@ -95,10 +105,18 @@ voz" ni "Recordatorio": di de qué va.
 Responde ÚNICAMENTE con un objeto JSON válido, sin texto antes ni después y sin
 vallas de código:
 
-{"tipo": "nota|tarea|evento|pregunta", "titulo": "...", "limpio": "...", "cuando": null, "tags": []}
+{"tipo": "nota|tarea|evento|pregunta|borrar", "titulo": "...", "limpio": "...", "cuando": null, "tags": [], "busqueda": null}
 
 Los saltos de línea dentro de `limpio` van escapados como \n.
+
+`busqueda` solo se rellena cuando el tipo es `borrar`. Si no, va `null`.
 
 Si el tipo es `pregunta`, `limpio` es la pregunta con el ruido de transcripción
 quitado y nada más, `titulo` es esa misma pregunta, `cuando` es `null` y `tags`
 va vacío. No la respondas tú: solo la marcas.
+
+Si el tipo es `borrar`, en `busqueda` van **solo las palabras con las que buscar
+la nota**, sin el verbo y sin relleno. Para "oye, cancélame la cita del dentista
+del jueves" la búsqueda es `dentista`. Para "olvida lo de comprar pan",
+`comprar pan`. Se busca por palabras sueltas contra lo que escribiste al
+apuntarlo, así que usa las que estarían en la nota, no sinónimos tuyos.

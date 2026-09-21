@@ -9,7 +9,9 @@ que razona.
 
 ## Arranque rápido
 
-Necesitas una VM en Proxmox con Debian, unos 6 GB de RAM y 4 vCPU, y Docker instalado.
+Necesitas un contenedor LXC o una VM en Proxmox con Debian, **3 GB de RAM** y 4
+vCPU, y Docker instalado. Con 3 GB cabe, pero sin holgura: mira
+[Cuánto cabe en 3 GB](#cuánto-cabe-en-3-gb) antes de cambiar ningún modelo.
 
 ```bash
 git clone <este-repo> secretario
@@ -23,7 +25,7 @@ mkdir -p vault
 docker compose up -d
 
 # Modelo de embeddings (una sola vez, tarda un par de minutos)
-docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull embeddinggemma
 ```
 
 n8n queda en `http://<ip-de-la-vm>:5678`, accesible solo desde la LAN o la VPN. La
@@ -51,7 +53,7 @@ prompt basta con editar el fichero: no hay que tocar ni reimportar el JSON.
 | n8n | Orquesta todo. Es donde vive la lógica. | 5678 (LAN) |
 | whisper | Transcribe las notas de voz. faster-whisper, modelo `small`, int8. | interno |
 | qdrant | Memoria vectorial, para poder preguntarle a las notas. | interno |
-| ollama | Genera los embeddings con `nomic-embed-text`. | interno |
+| ollama | Genera los embeddings con `embeddinggemma`. | interno |
 
 Solo n8n publica puerto. Los demás hablan entre ellos por la red interna de Docker
 y no son alcanzables desde fuera del host.
@@ -68,6 +70,8 @@ Telegram (long polling, llega al instante)
    Gemini limpia y clasifica
         │
         ├── pregunta → AI Agent → respuesta por Telegram
+        │
+        ├── borrar   → busca en el vault → botones → marca cancelado
         │
         ├── nota  ─┐
         ├── tarea ─┼→ .md en vault/  +  embedding en qdrant
@@ -106,6 +110,8 @@ origen: voz
 tags: [dentista, salud]
 ---
 
+<!-- y si la cancelas, se le añaden:  cancelado: true  y  cancelado_el: ... -->
+
 Dentista el miércoles a las seis, en la clínica de la calle Mayor.
 
 <!-- transcripción cruda -->
@@ -123,7 +129,7 @@ original que contrastar.
 ## La memoria
 
 Cada nota que se guarda se indexa también en Qdrant, en la colección `notas`. El
-embedding lo hace `nomic-embed-text` en Ollama, en local, y en el payload van el
+embedding lo hace `embeddinggemma` en Ollama, en local, y en el payload van el
 título, el tipo, la fecha y el fichero, para que el agente pueda decirte *cuándo*
 apuntaste algo y no solo *qué*.
 
@@ -138,6 +144,43 @@ silenciado. Es a propósito: si Ollama está ocupado o Qdrant no arranca, prefie
 que la nota llegue al disco y que la respuesta salga, aunque se quede sin indexar.
 El precio es que no te enteras. Si el bot dice que no encuentra algo que juras haber
 apuntado, reindexa antes de dar por rota la memoria.
+
+## Cancelar y olvidar
+
+*"Cancela el dentista del jueves"*, *"olvida lo del pan"*. El clasificador lo marca
+como `borrar`, el bot busca en el vault qué puede ser y te enseña **hasta tres
+candidatos** con su fecha para que elijas con un botón. Igual que al guardar un
+evento, pero al revés.
+
+Nada se borra del disco. La nota elegida se queda donde está con dos líneas más:
+
+```yaml
+cancelado: true
+cancelado_el: 2026-09-22T11:04:00
+```
+
+A partir de ahí desaparece de la agenda, de los avisos, del resumen de las 8:00 y
+del índice de Qdrant, y el punto correspondiente se borra por la API de Qdrant. A
+efectos de uso está borrada. A efectos de recuperarla, sigue ahí:
+
+```bash
+grep -rl 'cancelado: true' vault/
+```
+
+Es un borrado blando por dos razones. La primera es que el nodo de ficheros de n8n
+no sabe borrar: un `rm` de verdad obliga a meter el nodo Execute Command, que ejecuta
+shell arbitrario dentro del contenedor, y no compensa pagar eso por una papelera. La
+segunda es que el borrado es el único sitio donde equivocarse cuesta, y aquí el que
+decide qué borrar es un modelo de lenguaje.
+
+**La búsqueda es por palabras, no por significado**, y eso también es deliberado
+aunque tengamos Qdrant al lado. Que no encuentre *"lo del médico"* cuando la nota
+dice *"dentista"* se arregla repitiéndolo con otras palabras; borrar la nota
+equivocada, no. En un borrado interesa acertar poco antes que acertar de más. De
+paso, lee el vault directamente, así que funciona aunque el índice esté desfasado.
+
+A igualdad de palabras gana la nota con la fecha más cercana a hoy: si tienes dos
+citas con el dentista, la que cancelas casi siempre es la que viene.
 
 ## Los avisos
 
@@ -169,6 +212,44 @@ distingue de un bot roto.
 No lleva tareas sin fecha. Podría, pero no hay forma de marcar una tarea como hecha,
 así que la lista solo crecería hasta volverse ruido. Eso pide un botón de "hecho", y
 eso es otra fase.
+
+## Cuánto cabe en 3 GB
+
+Esta es la restricción que manda en el proyecto, así que conviene tenerla delante
+antes de cambiar nada. Uso real en reposo, con todo levantado:
+
+| | |
+|---|---|
+| n8n | ~625 MB |
+| whisper (`small`, int8) | ~1.000 MB |
+| ollama (con el modelo cargado) | ~325 MB |
+| qdrant | ~22 MB |
+| **total** | **~2,0 GB de 3,0** |
+
+Queda un giga, y ahí es donde caben los picos. No es mucho: hay una ejecución muerta
+con `possible out-of-memory issue` en el historial para demostrarlo.
+
+De ahí salen dos ajustes que parecen raros y no lo son. **`OLLAMA_KEEP_ALIVE=5m`**, en
+vez de las 24 horas que se suelen poner: el modelo de embeddings se usa unas pocas
+veces al día y no tiene sentido que ocupe memoria el resto del tiempo; recargarlo
+cuesta un segundo. Y **`embeddinggemma` en vez de `bge-m3`**, que es mejor modelo: son
+622 MB contra 1,2 GB, y buscando entre unos cientos de notas la diferencia entre los
+dos no se nota. La que sí se notaría es la de quedarse sin RAM.
+
+Si algún día le añades memoria, el primer sitio donde se nota no son los embeddings:
+es subir Whisper de `small` a `medium`. `small` se come palabras en español —en el
+vault hay un *"Cuérdame mañana comprar pan"* por *"Recuérdame"*— y eso pasa en cada
+nota que dictas.
+
+### Si corre en LXC
+
+`docker stats` miente dentro de un LXC: lee los cgroups del host y te enseña un
+límite que no existe, con contenedores al 200% de un tope que nadie aplica. Fíate del
+uso absoluto y de `free`, no del porcentaje.
+
+Y la swap del contenedor no se toca desde dentro: un swapfile no funciona en LXC
+porque no hay loop device. Se define en el host, con `pct set <vmid> -swap 2048` y un
+reinicio del contenedor.
 
 ## Decisiones y por qué
 
@@ -216,6 +297,8 @@ No intentes montarlo entero de golpe. Cada fase funciona sola y ya es útil.
    ahora se perdía por una rama sin conectar.
 4. **Los avisos.** ✅ Recordatorios de los eventos que se acercan, con repesca de
    los que se escaparon si el bot estuvo parado, y el parte de las 8:00.
+5. **Cancelar y olvidar.** ✅ Anular una cita o tirar una nota desde el chat, con
+   confirmación y sin perder nada. Hasta aquí, el bot solo sabía añadir.
 
 Google Calendar no está en ninguna fase todavía. Es una decisión aplazada, no un
 olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
@@ -316,6 +399,28 @@ olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
 - Marcar `avisado` cambia el `.md` y Qdrant no se entera, pero da igual: lo que se
   indexa es el título y el cuerpo, y el frontmatter no entra. No hace falta reindexar
   después de un aviso.
+
+- Cambiar de modelo de embeddings **obliga a reindexar**, aunque el número de
+  dimensiones coincida: los vectores de dos modelos distintos no son comparables y
+  Qdrant no tiene forma de saberlo. Se buscaría igual, pero devolvería cualquier
+  cosa. `03b - Reindexar` tira la colección y la rehace, que es justo lo que hace
+  falta. Y acuérdate de `ollama pull` del modelo nuevo antes, o el reindexado falla
+  entero.
+
+- Solo hay **un pendiente a la vez** en `staticData`, y ahora lo comparten las dos
+  preguntas con botones: guardar un evento y cancelar algo. Si dictas un evento y sin
+  contestar pides cancelar otra cosa, los botones del primero quedan caducados. Por
+  eso el pendiente lleva un campo `tipo`: sin él, un "sí" de una pregunta resolvería
+  la otra.
+- Una búsqueda de borrado que no encuentra nada **no toca el pendiente** que hubiera.
+  Es a propósito: pedir que cancele algo que no existe no debería cargarse la
+  confirmación de un evento que estabas a medias de guardar.
+- Cuidado con el pasado al dictar. *"Ayer cancelé el dentista"* es una nota; *"cancela
+  el dentista"* es una orden. El prompt lo explica y ante la duda se queda en `nota`,
+  pero es la frontera más fina de las cuatro que distingue.
+- Si Qdrant no responde al cancelar, el `.md` queda marcado igual y el punto se queda
+  en el índice: la nota estaría cancelada pero el agente aún podría encontrarla al
+  buscar. Lo arregla `03b - Reindexar`, que ya salta las canceladas.
 
 ## Estructura
 

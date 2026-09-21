@@ -86,7 +86,10 @@ services:
     expose:
       - "11434"
     environment:
-      - OLLAMA_KEEP_ALIVE=24h
+      # El modelo de embeddings se usa unas pocas veces al dia y esta maquina
+      # va justa de RAM. Con 24h se quedaba clavado en memoria todo el rato;
+      # con 5m solo ocupa mientras trabaja, y recargarlo cuesta un segundo.
+      - OLLAMA_KEEP_ALIVE=5m
 
 volumes:
   n8n_data:
