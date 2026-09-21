@@ -31,7 +31,14 @@ primera vez te pide crear el usuario propietario.
 
 Luego importa los workflows de `workflows/` desde la interfaz, y conecta las
 credenciales a mano: las exportaciones de n8n no las incluyen, a propósito. En la
-fase 1 la única credencial que hay que crear es la de Gemini.
+fase 1 la única credencial que hay que crear es la de Gemini. En la fase 3 entran
+dos más, y estas no llevan secreto porque los servicios son tuyos y viven en la
+red interna de Docker:
+
+| Credencial | Campo | Valor |
+|---|---|---|
+| Qdrant | URL | `http://qdrant:6333` (API key en blanco) |
+| Ollama | Base URL | `http://ollama:11434` |
 
 Los system prompts viven en `prompts/`, montado en el contenedor como `/prompts`
 en solo lectura. Los workflows los leen en ejecución, así que para cambiar un
@@ -60,9 +67,11 @@ Telegram (long polling, llega al instante)
         ▼
    Gemini limpia y clasifica
         │
+        ├── pregunta → AI Agent → respuesta por Telegram
+        │
         ├── nota  ─┐
         ├── tarea ─┼→ .md en vault/  +  embedding en qdrant
-        └── evento ┘
+        └── evento ┘   (el evento pregunta con botones antes de guardar)
         │
         ▼
    confirmación por Telegram
@@ -70,8 +79,15 @@ Telegram (long polling, llega al instante)
 
 Y en paralelo, cada 15 minutos, un workflow mira los eventos próximos y avisa.
 
+Da igual dictar que escribir: el mensaje escrito se salta Whisper y entra en el
+mismo sitio, solo que el prompt sabe que ese texto no trae ruido de transcripción
+y no hay que guardar el original aparte.
+
 Cuando el mensaje es una pregunta en vez de un dictado, entra un **AI Agent** con dos
-herramientas: buscar en Qdrant y leer la agenda del vault.
+herramientas: buscar en Qdrant y leer la agenda del vault. De distinguir pregunta de
+dictado se encarga el mismo prompt que ya clasificaba, que devuelve `tipo:
+"pregunta"`. Un router aparte habría sido más limpio, pero son dos peticiones al
+modelo en vez de una y el tope diario de Gemini se cuenta por peticiones.
 
 ## El almacén
 
@@ -81,9 +97,11 @@ Si mañana quieres abrirlo con Obsidian, funciona sin migrar nada.
 ```markdown
 ---
 tipo: evento
+titulo: "Dentista el miércoles"
 creado: 2026-09-21T18:40:00
 cuando: 2026-09-23T18:00:00
 avisado: false
+origen: voz
 tags: [dentista, salud]
 ---
 
@@ -96,8 +114,29 @@ Dentista el miércoles a las seis, en la clínica de la calle Mayor.
 Los eventos no necesitan calendario aparte: son notas con `cuando` relleno. El
 workflow de avisos los busca por ahí y marca `avisado: true` al notificar.
 
-La transcripción cruda se guarda siempre junto a la versión limpia. El día que el
-modelo interprete mal algo importante, querrás ver qué dijiste de verdad.
+La transcripción cruda se guarda junto a la versión limpia siempre que la haya. El
+día que el modelo interprete mal algo importante, querrás ver qué dijiste de verdad.
+Si el mensaje lo escribiste tú, `origen: texto` y ese bloque no aparece: no hay
+original que contrastar.
+
+## La memoria
+
+Cada nota que se guarda se indexa también en Qdrant, en la colección `notas`. El
+embedding lo hace `nomic-embed-text` en Ollama, en local, y en el payload van el
+título, el tipo, la fecha y el fichero, para que el agente pueda decirte *cuándo*
+apuntaste algo y no solo *qué*.
+
+El vault es la fuente de verdad y Qdrant es un índice desechable. Se reconstruye
+entero con el workflow **03b - Reindexar**, que tira la colección y la rehace leyendo
+`/vault/*.md`. Hay que pasar por ahí en tres casos: la primera vez, si vienes de la
+fase 2 con notas ya guardadas; cuando editas o borras notas a mano; y cuando el
+indexado en caliente ha fallado.
+
+Ese indexado cuelga en paralelo del guardado, no en cadena, y con el error
+silenciado. Es a propósito: si Ollama está ocupado o Qdrant no arranca, prefieres
+que la nota llegue al disco y que la respuesta salga, aunque se quede sin indexar.
+El precio es que no te enteras. Si el bot dice que no encuentra algo que juras haber
+apuntado, reindexa antes de dar por rota la memoria.
 
 ## Decisiones y por qué
 
@@ -132,16 +171,21 @@ copiar `vault/` y los volúmenes.
 
 No intentes montarlo entero de golpe. Cada fase funciona sola y ya es útil.
 
-1. **La libreta.** Polling → Whisper → limpiar con Gemini → guardar `.md` → responder
-   "apuntado". Con esto solo, ya estás usando el bot todos los días.
-2. **El clasificador.** Distingue nota de tarea de evento, resuelve fechas
+1. **La libreta.** ✅ Polling → Whisper → limpiar con Gemini → guardar `.md` →
+   responder "apuntado". Con esto solo, ya estás usando el bot todos los días.
+2. **El clasificador.** ✅ Distingue nota de tarea de evento, resuelve fechas
    relativas ("mañana", "en tres días", "en 1h") y confirma con botones antes de
    guardar un evento: Whisper se come fechas. Sin AI Agent todavía, es la misma
    llamada al modelo con un prompt más rico; las herramientas hacen falta en la
    fase 3, no aquí.
-3. **La memoria.** Qdrant, indexación y la herramienta de búsqueda. Aquí es cuando
-   deja de ser una libreta y pasa a ser un secretario.
+3. **La memoria.** ✅ Qdrant, indexación y la herramienta de búsqueda, más el AI
+   Agent que las usa. Aquí es cuando deja de ser una libreta y pasa a ser un
+   secretario: ya puedes preguntarle. Entra también la entrada por texto, que hasta
+   ahora se perdía por una rama sin conectar.
 4. **Los avisos.** Recordatorios y resumen diario de las 8:00.
+
+Google Calendar no está en ninguna fase todavía. Es una decisión aplazada, no un
+olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
 
 ## Trampas conocidas
 
@@ -186,6 +230,33 @@ No intentes montarlo entero de golpe. Cada fase funciona sola y ya es útil.
 - Al meter fechas relativas, pásale al prompt la fecha y hora actuales. Si no, el
   modelo no sabe qué significa "mañana".
 
+- Los ids de workflow a rellenar a mano son **tres**, no dos: los dos *Execute
+  Workflow* de `02a` y el nodo *Consultar la agenda* de `02b`, que apunta a
+  `03a - Agenda`. Todos vienen con `PEGA_AQUI_EL_ID_...`. Si te dejas el de la
+  agenda, el bot contesta igual pero se inventa la agenda o dice que no la ve.
+- La colección `notas` de Qdrant la crea el nodo de inserción la primera vez que
+  guardas algo. Si preguntas antes de tener ni una nota indexada, la búsqueda falla
+  y el agente contesta a ciegas. Corre `03b - Reindexar` una vez y ya está.
+- `03b - Reindexar` **borra la colección** antes de rehacerla. Tiene que hacerlo: el
+  nodo de inserción genera un id nuevo por cada trozo, así que reindexar sin borrar
+  duplicaría el vault entero en el índice.
+- La memoria de conversación del agente es la *Simple Memory* de n8n, que vive en la
+  RAM del proceso. Al reiniciar el contenedor se pierde el hilo. Para preguntas
+  sueltas da igual; para "¿y el martes?" justo después de reiniciar, no.
+- Una pregunta gasta **dos** peticiones al modelo, la de clasificar y la del agente,
+  y el agente puede gastar más si encadena herramientas. Con el tope diario del tier
+  gratuito, preguntar sale bastante más caro que dictar.
+- Si el clasificador se equivoca y toma tu pregunta por un dictado, la pregunta
+  acaba guardada como nota en el vault. Se borra y ya, pero conviene saberlo antes
+  de encontrarte "¿qué tengo mañana?" convertido en una nota.
+- El nodo de lectura de ficheros con comodín no devuelve lo mismo en todas las
+  versiones de n8n: unas sacan un item por fichero con la propiedad binaria `data`,
+  otras un solo item con `data0`, `data1`... Los nodos que leen el vault cubren las
+  dos formas a propósito; si los tocas, no des por hecha ninguna.
+- Los mensajes escritos entran por la rama **falsa** de *Es nota de voz*, que hasta
+  la fase 3 no iba a ningún sitio. Si la desconectas, el bot se queda mudo ante todo
+  lo que no sea audio, y sin error: el mensaje simplemente se evapora.
+
 ## Estructura
 
 ```
@@ -195,9 +266,14 @@ secretario/
 ├─ workflows/     # los JSON exportados de n8n
 │  ├─ 01-libreta.json       # fase 1, polling simple
 │  ├─ 02a-escucha.json      # el bucle de long polling
-│  └─ 02b-secretario.json   # transcribir, clasificar, guardar
+│  ├─ 02b-secretario.json   # transcribir, clasificar, guardar, contestar
+│  ├─ 03a-agenda.json       # herramienta del agente: los eventos del vault
+│  └─ 03b-reindexar.json    # rehace la colección de qdrant desde el vault
 ├─ prompts/       # system prompts en ficheros aparte, para versionarlos
-├─ scripts/       # reindexar el vault en qdrant, backups
+│  ├─ 01-limpiar-transcripcion.md
+│  ├─ 02-clasificar.md
+│  └─ 03-agente.md
+├─ scripts/       # limpiar los exports de n8n antes de subirlos
 ├─ docs/
 └─ vault/         # tus notas (en .gitignore)
 ```

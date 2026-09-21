@@ -1,0 +1,209 @@
+{
+  "name": "03b - Reindexar",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Reindexar a mano",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "http://qdrant:6333/collections/notas",
+        "options": {}
+      },
+      "name": "Borrar la coleccion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "/vault/*.md",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "name": "Leer el vault",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        40,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function decodificar(b64) {\n  // Los binarios viajan en base64 dentro del item mientras el modo de binarios\n  // sea el de memoria, que es el de serie. Buffer existe en el nodo Code, pero\n  // el runner podria no exponerlo: de ahi el plan B.\n  if (typeof Buffer !== 'undefined') return Buffer.from(b64, 'base64').toString('utf8');\n  const bin = atob(b64);\n  return new TextDecoder('utf-8').decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));\n}\n\nfunction leerVault() {\n  // Segun la version de n8n, el nodo de lectura saca un item por fichero o un\n  // solo item con data0, data1... Recorremos items y propiedades a la vez, que\n  // cubre las dos formas sin preguntar.\n  const ficheros = [];\n  for (const item of $input.all()) {\n    for (const clave of Object.keys(item.binary ?? {})) {\n      const b = item.binary[clave];\n      if (!b || typeof b.data !== 'string') continue;\n      ficheros.push({\n        nombre: b.fileName ?? clave,\n        texto: decodificar(b.data),\n      });\n    }\n  }\n  return ficheros;\n}\n\nfunction frontmatter(texto) {\n  // Un parser de YAML de tres lineas. Solo hay que leer lo que escribe\n  // \"Componer nota\", que son pares clave: valor planos.\n  const m = texto.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);\n  if (!m) return {};\n  const campos = {};\n  for (const linea of m[1].split(/\\r?\\n/)) {\n    const i = linea.indexOf(':');\n    if (i === -1) continue;\n    const clave = linea.slice(0, i).trim();\n    let valor = linea.slice(i + 1).trim();\n    if (valor.startsWith('\"') && valor.endsWith('\"')) {\n      valor = valor.slice(1, -1).replace(/\\\\\"/g, '\"');\n    }\n    campos[clave] = valor;\n  }\n  return campos;\n}\n\n// Modo: Run Once for All Items.\n// Saca un item por nota del vault, con la misma forma que \"Indexar la nota\" de\n// 02b. El cuerpo se corta antes de la transcripcion cruda: lo que se indexa es\n// la version limpia, igual que cuando la nota entro por primera vez.\n\nfunction cuerpo(texto) {\n  const sinFrontmatter = texto.replace(/^---\\r?\\n[\\s\\S]*?\\r?\\n---\\r?\\n?/, '');\n  const corte = sinFrontmatter.search(/<!--\\s*transcripci/i);\n  const util = corte === -1 ? sinFrontmatter : sinFrontmatter.slice(0, corte);\n  // El titulo ya va aparte en el texto indexable, asi que se quita el \"# \".\n  return util.replace(/^#\\s+.*\\r?\\n?/, '').trim();\n}\n\nconst salida = [];\n\nfor (const f of leerVault()) {\n  const fm = frontmatter(f.texto);\n  const titulo = fm.titulo || f.nombre.replace(/\\.md$/, '');\n  const limpio = cuerpo(f.texto);\n  if (!limpio) continue;                     // nota vacia, nada que indexar\n\n  salida.push({\n    json: {\n      fichero: f.nombre,\n      titulo,\n      tipo: fm.tipo || 'nota',\n      cuando: fm.cuando || '',\n      tags: (fm.tags || '').replace(/^\\[|\\]$/g, '').trim(),\n      creado: fm.creado || '',\n      texto: titulo + '\\n\\n' + limpio,\n    },\n  });\n}\n\nreturn salida;\n"
+      },
+      "name": "Trocear el vault",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "notas",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "name": "Guardar en Qdrant",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        300
+      ],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": "nomic-embed-text:latest",
+        "options": {}
+      },
+      "name": "Embeddings del reindexado",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
+      "typeVersion": 1,
+      "position": [
+        400,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.texto }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "fichero",
+                "value": "={{ $json.fichero }}"
+              },
+              {
+                "name": "titulo",
+                "value": "={{ $json.titulo }}"
+              },
+              {
+                "name": "tipo",
+                "value": "={{ $json.tipo }}"
+              },
+              {
+                "name": "cuando",
+                "value": "={{ $json.cuando }}"
+              },
+              {
+                "name": "tags",
+                "value": "={{ $json.tags }}"
+              },
+              {
+                "name": "creado",
+                "value": "={{ $json.creado }}"
+              }
+            ]
+          }
+        }
+      },
+      "name": "Cargador del reindexado",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        560,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "Reindexar a mano": {
+      "main": [
+        [
+          {
+            "node": "Borrar la coleccion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar la coleccion": {
+      "main": [
+        [
+          {
+            "node": "Leer el vault",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer el vault": {
+      "main": [
+        [
+          {
+            "node": "Trocear el vault",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trocear el vault": {
+      "main": [
+        [
+          {
+            "node": "Guardar en Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings del reindexado": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Guardar en Qdrant",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cargador del reindexado": {
+      "ai_document": [
+        [
+          {
+            "node": "Guardar en Qdrant",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Madrid"
+  },
+  "pinData": {}
+}
