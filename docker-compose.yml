@@ -1,0 +1,95 @@
+name: secretario
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: secretario-n8n
+    restart: unless-stopped
+    ports:
+      # Solo accesible por LAN/VPN. No reenviar este puerto en el router.
+      - "5678:5678"
+    environment:
+      # Si esta clave cambia, TODAS las credenciales guardadas dejan de descifrarse.
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - GENERIC_TIMEZONE=Europe/Madrid
+      - TZ=Europe/Madrid
+      # Accedes por http://IP:5678 sin TLS; sin esto el login no guarda la cookie.
+      - N8N_SECURE_COOKIE=false
+      # Los nodos de fichero solo pueden tocar el vault y los prompts.
+      # OJO: el separador de rutas es punto y coma, no dos puntos.
+      - N8N_RESTRICT_FILE_ACCESS_TO=/vault;/prompts
+      # El token va en la ruta de la URL de la API de Telegram, y una credencial
+      # de n8n no sabe inyectarlo ahi. Los workflows lo leen como $env.
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}
+      # Sin esto, $env en expresiones y en nodos Code da "access to env vars
+      # denied". Aqui solo hay un usuario, asi que no protege de nadie.
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # Un poll cada 5s son ~17.000 ejecuciones al dia en el historial, casi
+      # todas vacias. Sin poda, la SQLite de n8n se hincha en pocos dias.
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=48
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=5000
+      # Mejor que esto: en los ajustes del workflow de polling, poner
+      # "Save successful production executions" a "Do not save". Afecta solo a
+      # ese workflow y te deja ver los exitos de los demas.
+      # - EXECUTIONS_DATA_SAVE_ON_SUCCESS=none
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_LOG_LEVEL=info
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./vault:/vault
+      # Los system prompts se versionan en el repo y se leen en ejecucion,
+      # asi que se editan sin tocar el JSON del workflow.
+      - ./prompts:/prompts:ro
+    depends_on:
+      - whisper
+      - qdrant
+      - ollama
+
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: secretario-whisper
+    restart: unless-stopped
+    environment:
+      # faster-whisper usa CTranslate2: mucho más rápido en CPU que el whisper original.
+      - ASR_ENGINE=faster_whisper
+      - ASR_MODEL=small
+      # int8 es lo correcto en un Broadwell (AVX2, sin AVX-512).
+      - ASR_COMPUTE_TYPE=int8
+      - OMP_NUM_THREADS=6
+    volumes:
+      - whisper_cache:/root/.cache
+    # Sin puertos publicados: solo n8n le habla, por la red interna.
+    expose:
+      - "9000"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: secretario-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    expose:
+      - "6333"
+    # Descomenta si quieres curiosear el panel web desde la VPN:
+    # ports:
+    #   - "6333:6333"
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: secretario-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    expose:
+      - "11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+
+volumes:
+  n8n_data:
+  whisper_cache:
+  qdrant_data:
+  ollama_data:

@@ -1,0 +1,9 @@
+.env
+
+# Tus notas son tuyas y no van a git.
+vault/*
+!vault/.gitkeep
+!vault/_ejemplo.md
+
+# Exports de n8n con credenciales dentro por accidente
+workflows/*.local.json

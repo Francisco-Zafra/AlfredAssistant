@@ -1,0 +1,541 @@
+{
+  "name": "01 - Libreta",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "71e8d23b-c2d5-4c87-81d8-9ce74638e646",
+      "name": "Cada 5 segundos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        5056,
+        2048
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// El offset marca el ultimo update ya procesado. Vive en el almacen estatico\n// del workflow, asi que sobrevive a reinicios de n8n.\nconst estado = $getWorkflowStaticData('global');\nreturn [{ json: { offset: estado.telegramOffset ?? 0 } }];\n"
+      },
+      "id": "bd0507c1-095f-4b04-9f85-dc5abe3e9067",
+      "name": "Leer offset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5264,
+        2048
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getUpdates",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "offset",
+              "value": "={{ $json.offset }}"
+            },
+            {
+              "name": "timeout",
+              "value": "0"
+            },
+            {
+              "name": "allowed_updates",
+              "value": "[\"message\"]"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "86da87fd-241b-4344-8cc7-120f69dff260",
+      "name": "getUpdates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5488,
+        2048
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Puerta de entrada. El id permitido llega por variable de entorno del\n// contenedor (TELEGRAM_ALLOWED_USER_ID en .env).\nconst PERMITIDO = Number($env.TELEGRAM_ALLOWED_USER_ID);\n\nif (!Number.isFinite(PERMITIDO) || PERMITIDO === 0) {\n  throw new Error('TELEGRAM_ALLOWED_USER_ID no esta definido en el contenedor de n8n');\n}\n\nconst estado = $getWorkflowStaticData('global');\nconst respuesta = $input.first().json;\n\nif (!respuesta.ok || !respuesta.result || respuesta.result.length === 0) {\n  return [];\n}\n\nconst updates = respuesta.result;\n\n// Avanzamos el offset ANTES de procesar: si no, un poll que entra mientras se\n// transcribe un audio largo volveria a coger el mismo mensaje.\n// Precio: si n8n se cae a mitad, ese mensaje se pierde.\n// Ver docs/telegram-polling.md\nestado.telegramOffset = Math.max(...updates.map(u => u.update_id)) + 1;\n\nconst salida = [];\n\nfor (const u of updates) {\n  const msg = u.message;\n  if (!msg) continue;\n  if (msg.from?.id !== PERMITIDO) continue;\n\n  salida.push({\n    json: {\n      update_id: u.update_id,\n      chat_id: msg.chat.id,\n      message_id: msg.message_id,\n      fecha: new Date(msg.date * 1000).toISOString(),\n      tipo: msg.voice ? 'voz' : (msg.text ? 'texto' : 'otro'),\n      texto: msg.text ?? null,\n      voice_file_id: msg.voice?.file_id ?? null,\n      voice_duracion: msg.voice?.duration ?? null,\n    },\n  });\n}\n\nreturn salida;\n"
+      },
+      "id": "43961872-f928-4ff8-b7b9-8bb499d1cb4d",
+      "name": "Filtrar y normalizar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5712,
+        2048
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-es-voz",
+              "leftValue": "={{ $json.tipo }}",
+              "rightValue": "voz",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "dc818c36-ee51-4e87-909b-11e1f9533ffe",
+      "name": "Es nota de voz",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5936,
+        2048
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getFile",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "file_id",
+              "value": "={{ $json.voice_file_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "f1a2c461-16d4-42ff-afcc-113ae4da5dc5",
+      "name": "getFile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6144,
+        1904
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $json.result.file_path }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "c07988b4-dd97-4b59-8336-87b7774b80ad",
+      "name": "Descargar audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6368,
+        1904
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://whisper:9000/asr",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "task",
+              "value": "transcribe"
+            },
+            {
+              "name": "language",
+              "value": "es"
+            },
+            {
+              "name": "output",
+              "value": "json"
+            },
+            {
+              "name": "vad_filter",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "audio_file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "38fffab1-20f9-4e3c-b909-22e96384fe42",
+      "name": "Transcribir con Whisper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6592,
+        1904
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Modo: Run Once for Each Item.\n// El webservice de whisper marca la respuesta como text/plain segun la\n// version, y entonces n8n no la parsea: deja el JSON entero como string en\n// json.data. Esto cubre los tres casos sin tener que adivinar cual toca.\n\nconst j = $json;\nlet texto = '';\n\nif (typeof j.text === 'string') {\n  texto = j.text;                            // n8n lo parseo bien\n} else if (typeof j.data === 'string') {\n  try {\n    texto = JSON.parse(j.data).text ?? '';   // JSON sin parsear\n  } catch (e) {\n    texto = j.data;                          // output=txt, texto pelado\n  }\n}\n\nreturn { json: { transcripcion: String(texto).trim() } };\n"
+      },
+      "id": "febfd6bb-afb5-455c-899f-011041d00ace",
+      "name": "Normalizar transcripcion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6816,
+        1904
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "/prompts/01-limpiar-transcripcion.md",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "id": "198136ab-c400-4803-9a82-b748e505330e",
+      "name": "Leer prompt del sistema",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        7024,
+        1904
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "destinationKey": "promptSistema",
+        "options": {}
+      },
+      "id": "8d8ad145-83ff-4e5c-8f16-03f5b59413bd",
+      "name": "Extraer prompt",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        7248,
+        1904
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Transcripcion automatica de la nota de voz:\n\n{{ $('Normalizar transcripcion').item.json.transcripcion }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "={{ $json.promptSistema || $json.data }}"
+            }
+          ]
+        }
+      },
+      "id": "28ff0acc-b6fc-4097-b548-f5be82ac3a34",
+      "name": "Limpiar con Gemini",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        7472,
+        1904
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "c0c24dbd-c13a-48bc-9563-f34902862fec",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        7472,
+        2128
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Modo: Run Once for Each Item.\n// Junta la transcripcion cruda con la salida del modelo y arma el .md.\n\nconst cruda = String($('Normalizar transcripcion').item.json.transcripcion ?? '').trim();\n\nconst meta = $('Filtrar y normalizar').item.json;\n\n// El modelo deberia devolver JSON pelado, pero a veces lo envuelve en vallas.\nfunction parsearJson(s) {\n  const t = String(s ?? '').trim()\n    .replace(/^```(?:json)?/i, '')\n    .replace(/```$/, '')\n    .trim();\n  try { return JSON.parse(t); } catch (e) { /* probamos a recortar */ }\n  const i = t.indexOf('{');\n  const f = t.lastIndexOf('}');\n  if (i !== -1 && f > i) {\n    try { return JSON.parse(t.slice(i, f + 1)); } catch (e) { /* nos rendimos */ }\n  }\n  return null;\n}\n\nconst modelo = parsearJson($json.text ?? $json.response ?? '') ?? {};\n\n// Si el modelo falla, la nota se guarda igual con la transcripcion cruda.\n// Perder la nota seria peor que guardarla fea.\nconst limpio = String(modelo.limpio ?? cruda).trim();\nlet titulo = String(modelo.titulo ?? cruda.split(/\\s+/).slice(0, 8).join(' ')).trim();\ntitulo = titulo.replace(/\\s+/g, ' ').slice(0, 80) || 'Nota sin titulo';\n\nconst slug = titulo\n  .normalize('NFD').replace(/[^\\x00-\\x7F]/g, '')\n  .toLowerCase()\n  .replace(/[^a-z0-9]+/g, '-')\n  .replace(/^-+|-+$/g, '')\n  .slice(0, 50) || 'nota';\n\nconst creado = DateTime.fromISO(meta.fecha).setZone('Europe/Madrid');\nconst nombreFichero = creado.toFormat('yyyy-LL-dd-HHmm') + '-' + slug + '.md';\n\nconst tituloYaml = '\"' + titulo.replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\"') + '\"';\nconst crudaCitada = (cruda || '(transcripcion vacia)')\n  .split('\\n').map(l => '> ' + l).join('\\n');\n\nconst contenido = [\n  '---',\n  'tipo: nota',\n  'titulo: ' + tituloYaml,\n  'creado: ' + creado.toFormat(\"yyyy-LL-dd'T'HH:mm:ss\"),\n  'cuando:',\n  'avisado: false',\n  'tags: []',\n  '---',\n  '',\n  '# ' + titulo,\n  '',\n  limpio,\n  '',\n  '<!-- transcripcion cruda -->',\n  crudaCitada,\n  '',\n].join('\\n');\n\nreturn {\n  json: {\n    nombreFichero,\n    titulo,\n    contenido,\n    chat_id: meta.chat_id,\n    message_id: meta.message_id,\n    modeloOk: Object.keys(modelo).length > 0,\n  },\n};\n"
+      },
+      "id": "c10dc429-8e8d-4365-bc1d-b671b3fc6e82",
+      "name": "Componer nota",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7744,
+        1904
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "contenido",
+        "options": {
+          "encoding": "utf8",
+          "fileName": "={{ $json.nombreFichero }}"
+        }
+      },
+      "id": "f42b4680-4828-4059-a1ee-fc6f48586915",
+      "name": "Markdown a fichero",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        7904,
+        1904
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/vault/{{ $('Componer nota').item.json.nombreFichero }}",
+        "options": {}
+      },
+      "id": "2f032cd0-c70f-4468-a405-2af7b9b09951",
+      "name": "Guardar en el vault",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        8128,
+        1904
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $('Componer nota').item.json.chat_id, reply_to_message_id: $('Componer nota').item.json.message_id, text: 'Apuntado: ' + $('Componer nota').item.json.titulo + ($('Componer nota').item.json.modeloOk ? '' : ' (el modelo no respondio: guardada la transcripcion cruda)') }) }}",
+        "options": {}
+      },
+      "id": "67d8febb-2147-4b58-ac65-f4d3a910e794",
+      "name": "Responder en Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        8352,
+        1904
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Cada 5 segundos": {
+      "main": [
+        [
+          {
+            "node": "Leer offset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer offset": {
+      "main": [
+        [
+          {
+            "node": "getUpdates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "getUpdates": {
+      "main": [
+        [
+          {
+            "node": "Filtrar y normalizar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar y normalizar": {
+      "main": [
+        [
+          {
+            "node": "Es nota de voz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es nota de voz": {
+      "main": [
+        [
+          {
+            "node": "getFile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "getFile": {
+      "main": [
+        [
+          {
+            "node": "Descargar audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar audio": {
+      "main": [
+        [
+          {
+            "node": "Transcribir con Whisper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribir con Whisper": {
+      "main": [
+        [
+          {
+            "node": "Normalizar transcripcion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar transcripcion": {
+      "main": [
+        [
+          {
+            "node": "Leer prompt del sistema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer prompt del sistema": {
+      "main": [
+        [
+          {
+            "node": "Extraer prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer prompt": {
+      "main": [
+        [
+          {
+            "node": "Limpiar con Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Limpiar con Gemini",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpiar con Gemini": {
+      "main": [
+        [
+          {
+            "node": "Componer nota",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Componer nota": {
+      "main": [
+        [
+          {
+            "node": "Markdown a fichero",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Markdown a fichero": {
+      "main": [
+        [
+          {
+            "node": "Guardar en el vault",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar en el vault": {
+      "main": [
+        [
+          {
+            "node": "Responder en Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  }
+}
