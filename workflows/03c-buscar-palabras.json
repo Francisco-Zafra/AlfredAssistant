@@ -1,0 +1,102 @@
+{
+  "name": "03c - Buscar por palabras",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "function leerVault() {\n  // El texto lo resuelve el nodo \"Extraer el texto\", pero ese nodo se queda\n  // SOLO con la clave que le pides y tira el resto del json, el nombre del\n  // fichero incluido. Hay que ir a buscarlo al nodo de lectura, que saca los\n  // items en el mismo orden, y emparejarlos por posicion.\n  const leidos = $('Leer el vault').all();\n  const ficheros = [];\n  $input.all().forEach((item, i) => {\n    const j = item.json ?? {};\n    if (typeof j.contenido !== 'string' || !j.contenido) return;\n    const src = leidos[i] ?? {};\n    const nombre = src.json?.fileName ?? src.binary?.data?.fileName;\n    if (!nombre) return;\n    ficheros.push({ nombre, texto: j.contenido });\n  });\n  return ficheros;\n}\n\nfunction frontmatter(texto) {\n  const m = texto.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);\n  if (!m) return {};\n  const campos = {};\n  for (const linea of m[1].split(/\\r?\\n/)) {\n    const i = linea.indexOf(':');\n    if (i === -1) continue;\n    const clave = linea.slice(0, i).trim();\n    let valor = linea.slice(i + 1).trim();\n    if (valor.startsWith('\"') && valor.endsWith('\"')) {\n      valor = valor.slice(1, -1).replace(/\\\\\"/g, '\"');\n    }\n    campos[clave] = valor;\n  }\n  return campos;\n}\n\n// Modo: Run Once for All Items.\n// Herramienta \"buscar_palabras\" del agente. Busca en el vault las notas que\n// contienen las palabras tal cual, con la misma puntuacion que \"Buscar que\n// borrar\" de 02b.\n//\n// Existe porque la busqueda por significado falla justo con lo que mas se\n// pregunta: nombres propios. El embedding de \"Elena\" a secas no se parece al\n// de una nota que dice \"Elena se ha apuntado a escalada\", y Qdrant devuelve\n// cualquier cosa. Aqui, si la nota dice Elena, sale.\n\nconst MAX_RESULTADOS = 8;\nconst FRAGMENTO = 500;\n\nconst DIAS = ['lunes', 'martes', 'mi\u00e9rcoles', 'jueves', 'viernes', 's\u00e1bado', 'domingo'];\nconst MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',\n               'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];\n\n// El nodo de herramienta del agente manda la busqueda en \"query\". Por si una\n// version de n8n la llama de otra forma, vale el primer texto que venga.\nconst entrada = $('Pregunta del agente').first().json ?? {};\nconst busqueda = String(entrada.query ??\n  Object.values(entrada).find((v) => typeof v === 'string') ?? '').trim();\n\n// Sin acentos, sin signos y en minusculas, para que \"revisi\u00f3n\" y \"revision\"\n// sean la misma palabra.\nconst normalizar = (s) => String(s ?? '')\n  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')\n  .toLowerCase().replace(/[^a-z0-9\\s]/g, ' ').replace(/\\s+/g, ' ').trim();\n\n// Palabras que salen en cualquier frase y no distinguen una nota de otra. Mas\n// corta que la de borrar: aqui \"cita\" o \"nota\" pueden ser justo lo buscado.\nconst VACIAS = new Set(['el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',\n  'de', 'del', 'al', 'en', 'que', 'lo', 'mi', 'me', 'se', 'con', 'para', 'por',\n  'es', 'este', 'esta', 'esto', 'eso', 'esa', 'sobre', 'algo']);\n\nconst claves = [...new Set(normalizar(busqueda).split(' ')\n  .filter((p) => p.length > 2 && !VACIAS.has(p)))];\n\nif (!claves.length) {\n  return [{ json: { response: 'Dame una a tres palabras clave, por ejemplo un nombre: \"' +\n    busqueda + '\" no trae ninguna que sirva para buscar.' } }];\n}\n\n// El cuerpo sin frontmatter ni la transcripcion cruda, que repite lo mismo con\n// mas ruido.\nconst cuerpo = (texto) => texto\n  .replace(/^---\\r?\\n[\\s\\S]*?\\r?\\n---\\r?\\n?/, '')\n  .split('<!-- transcripci\u00f3n cruda -->')[0]\n  .replace(/<!--[\\s\\S]*?-->/g, '')\n  .trim();\n\n// Un trozo alrededor de la primera coincidencia, para que el modelo vea el\n// contexto del nombre y no solo el principio de la nota.\nfunction fragmento(texto) {\n  if (texto.length <= FRAGMENTO) return texto;\n  const plano = normalizar(texto);\n  let pos = -1;\n  for (const c of claves) {\n    const i = plano.indexOf(c);\n    if (i !== -1 && (pos === -1 || i < pos)) pos = i;\n  }\n  // normalizar cambia longitudes solo en los signos, asi que la posicion es\n  // aproximada. Para un fragmento vale.\n  const desde = Math.max(0, Math.min(pos - FRAGMENTO / 3, texto.length - FRAGMENTO));\n  return (desde > 0 ? '\u2026' : '') + texto.slice(desde, desde + FRAGMENTO).trim() +\n    (desde + FRAGMENTO < texto.length ? '\u2026' : '');\n}\n\nconst fecha = (iso) => {\n  const d = iso ? DateTime.fromISO(iso, { zone: 'Europe/Madrid' }) : null;\n  return d && d.isValid ? d : null;\n};\nconst humana = (d) => DIAS[d.weekday - 1] + ' ' + d.day + ' de ' + MESES[d.month - 1] +\n  ' de ' + d.year;\n\nconst encontradas = [];\n\nfor (const f of leerVault()) {\n  const fm = frontmatter(f.texto);\n  // Una nota cancelada no cuenta para nada, tampoco para buscar.\n  if (String(fm.cancelado).trim() === 'true') continue;\n\n  const texto = cuerpo(f.texto);\n  const heno = normalizar((fm.titulo ?? '') + ' ' + (fm.tags ?? '') + ' ' + texto);\n  const palabras = new Set(heno.split(' '));\n\n  let puntos = 0;\n  for (const c of claves) {\n    if (palabras.has(c)) puntos += 2;          // la palabra entera\n    else if (heno.includes(c)) puntos += 1;    // dentro de otra palabra\n  }\n  if (!puntos) continue;\n\n  const creado = fecha(fm.creado);\n  const cuando = fecha(fm.cuando);\n  encontradas.push({\n    puntos,\n    orden: creado ? creado.toMillis() : 0,\n    titulo: fm.titulo || f.nombre.replace(/\\.md$/, ''),\n    tipo: fm.tipo || 'nota',\n    creado,\n    cuando,\n    fichero: f.nombre,\n    texto,\n  });\n}\n\n// A igualdad de palabras, lo mas reciente primero: lo que se dijo hace un mes\n// suele valer mas que lo de hace dos anos.\nencontradas.sort((a, b) => (b.puntos - a.puntos) || (b.orden - a.orden));\nconst elegidas = encontradas.slice(0, MAX_RESULTADOS);\n\nif (!elegidas.length) {\n  return [{ json: { response: 'Ninguna nota del vault contiene \"' + claves.join(' ') +\n    '\". Prueba otra forma de escribirlo, o busca por tema con buscar_notas.' } }];\n}\n\nconst bloques = elegidas.map((e) => {\n  const cabecera = ['- ' + e.titulo + ' (' + e.tipo + ')'];\n  if (e.creado) cabecera.push('apuntada el ' + humana(e.creado));\n  if (e.cuando) cabecera.push('para el ' + humana(e.cuando) + ' a las ' + e.cuando.toFormat('HH:mm'));\n  cabecera.push('fichero ' + e.fichero);\n  return cabecera.join(', ') + '\\n  ' + fragmento(e.texto).replace(/\\n+/g, '\\n  ');\n});\n\nconst total = encontradas.length > elegidas.length\n  ? ' (' + encontradas.length + ' en total, van las ' + elegidas.length + ' que mejor encajan)'\n  : '';\n\nreturn [{ json: { response: 'Notas que contienen \"' + claves.join(' ') + '\"' + total +\n  ':\\n\\n' + bloques.join('\\n\\n') } }];\n",
+        "mode": "runOnceForAllItems"
+      },
+      "name": "Buscar por palabras",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "data",
+        "destinationKey": "contenido",
+        "operation": "text",
+        "options": {
+          "destinationKey": "contenido"
+        }
+      },
+      "name": "Extraer el texto",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        40,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "/vault/*.md",
+        "operation": "read",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "name": "Leer el vault",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -180,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "name": "Pregunta del agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Extraer el texto": {
+      "main": [
+        [
+          {
+            "node": "Buscar por palabras",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer el vault": {
+      "main": [
+        [
+          {
+            "node": "Extraer el texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pregunta del agente": {
+      "main": [
+        [
+          {
+            "node": "Leer el vault",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "Europe/Madrid",
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
