@@ -42,11 +42,6 @@ red interna de Docker:
 | Qdrant | URL | `http://qdrant:6333` (API key en blanco) |
 | Ollama | Base URL | `http://ollama:11434` |
 
-Si usas [Memos](#memos), hay una cuarta, esta sí con secreto: una **Header Auth**
-llamada `Memos`, con *Name* `Authorization` y *Value* `Bearer <token>`. El token se
-saca en Memos, en *Settings > My Account > Access Tokens*. Asígnala a los nodos
-`buscar_memos` y `leer_memo` de `02b`.
-
 Los system prompts viven en `prompts/`, montado en el contenedor como `/prompts`
 en solo lectura. Los workflows los leen en ejecución, así que para cambiar un
 prompt basta con editar el fichero: no hay que tocar ni reimportar el JSON.
@@ -93,28 +88,11 @@ Da igual dictar que escribir: el mensaje escrito se salta Whisper y entra en el
 mismo sitio, solo que el prompt sabe que ese texto no trae ruido de transcripción
 y no hay que guardar el original aparte.
 
-Cuando el mensaje es una pregunta en vez de un dictado, entra un **AI Agent** con sus
-herramientas: buscar en Qdrant por significado, buscar en el vault por palabras
-exactas, leer la agenda y, si lo tienes, buscar y leer en [Memos](#memos). De
-distinguir pregunta de
+Cuando el mensaje es una pregunta en vez de un dictado, entra un **AI Agent** con dos
+herramientas: buscar en Qdrant y leer la agenda del vault. De distinguir pregunta de
 dictado se encarga el mismo prompt que ya clasificaba, que devuelve `tipo:
 "pregunta"`. Un router aparte habría sido más limpio, pero son dos peticiones al
 modelo en vez de una y el tope diario de Gemini se cuenta por peticiones.
-
-El agente no se limita a devolver la nota que coincide. El prompt distingue dos
-clases de pregunta. Las de **recordar** (*"¿qué dije del seguro?"*) tienen una
-respuesta apuntada, y si no está, no está. Las de **pensar** (*"¿qué le compro a
-Elena por su cumple?"*) no tienen ninguna nota con la respuesta: el agente busca
-primero el centro (Elena), luego los ángulos que harían falta para decidir (gustos,
-lo que ha dicho que quiere, regalos de otros años) en todas las fuentes, y propone
-dos o tres ideas con su porqué. Los hechos salen de las notas y llevan fecha; lo que
-aporta el modelo de su cosecha tiene que notarse como tal. Inventarse hechos de tu
-vida sigue prohibido.
-
-La búsqueda por palabras (`03c`) existe por los nombres propios. El embedding de
-*"Elena"* a secas no se parece al de *"Elena se ha apuntado a escalada"*, y Qdrant
-devuelve cualquier cosa; una búsqueda literal, en cambio, encuentra todas las notas
-que la mencionan, vayan de lo que vayan. Usa la misma puntuación que el borrado.
 
 ## El almacén
 
@@ -167,29 +145,7 @@ que la nota llegue al disco y que la respuesta salga, aunque se quede sin indexa
 El precio es que no te enteras. Si el bot dice que no encuentra algo que juras haber
 apuntado, reindexa antes de dar por rota la memoria.
 
-## Memos
-
-Si ya tienes notas en una instancia de [Memos](https://usememos.com), el agente
-también puede consultarlas. No está en el compose: es un servicio aparte en la LAN,
-y el bot solo lo **lee**. Nada de lo que dictas va a Memos, y nada de Memos entra en
-el vault ni en Qdrant.
-
-Son tres herramientas del agente en `02b`, las tres nodos HTTP Request Tool:
-
-| Herramienta | Qué hace |
-|---|---|
-| `buscar_memos` | Lista o filtra notas con la API de Memos (`GET /api/v1/memos`), con filtros CEL como `content.contains("receta")`. Diez por página. |
-| `leer_memo` | Lee una nota concreta por su `name` (`memos/abc123`). |
-| `avisar_busqueda` | Te manda por Telegram un *"🔎 Voy a buscar en Memos…"* silencioso antes de cada consulta, para que la espera no parezca un bot colgado. |
-
-`avisar_busqueda` no es solo de Memos: el agente lo usa antes de cualquier fuente,
-también Qdrant y la agenda. Por eso cuelga del agente aunque no uses Memos, y
-funciona sin configurar nada.
-
-Si no usas Memos, borra `buscar_memos` y `leer_memo` y quita las menciones de las
-descripciones de `avisar_busqueda`. Si los dejas sin credencial, el agente los
-seguirá intentando y fallarán en cada pregunta.
-
+## Cancelar y olvidar
 
 *"Cancela el dentista del jueves"*, *"olvida lo del pan"*. El clasificador lo marca
 como `borrar`, el bot busca en el vault qué puede ser y te enseña **hasta tres
@@ -390,14 +346,10 @@ olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
 - Al meter fechas relativas, pásale al prompt la fecha y hora actuales. Si no, el
   modelo no sabe qué significa "mañana".
 
-- Los ids de workflow a rellenar a mano son **cuatro**: los dos *Execute
-  Workflow* de `02a`, el nodo *Consultar la agenda* de `02b`, que apunta a
-  `03a - Agenda`, y *Buscar por palabras*, también en `02b`, que apunta a
-  `03c - Buscar por palabras`. Todos vienen con `PEGA_AQUI_EL_ID_...`. Si te dejas
-  alguno de los dos del agente, el bot contesta igual, pero se inventa la agenda o
-  dice que no la ve, y los nombres propios solo los busca por significado.
-- `03a` y `03c` los llama el agente de `02b`, así que tienen que estar **publicados**
-  (activos). Importarlos no basta.
+- Los ids de workflow a rellenar a mano son **tres**, no dos: los dos *Execute
+  Workflow* de `02a` y el nodo *Consultar la agenda* de `02b`, que apunta a
+  `03a - Agenda`. Todos vienen con `PEGA_AQUI_EL_ID_...`. Si te dejas el de la
+  agenda, el bot contesta igual pero se inventa la agenda o dice que no la ve.
 - La colección `notas` de Qdrant la crea el nodo de inserción la primera vez que
   guardas algo. Si preguntas antes de tener ni una nota indexada, la búsqueda falla
   y el agente contesta a ciegas. Corre `03b - Reindexar` una vez y ya está.
@@ -410,11 +362,6 @@ olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
 - Una pregunta gasta **dos** peticiones al modelo, la de clasificar y la del agente,
   y el agente puede gastar más si encadena herramientas. Con el tope diario del tier
   gratuito, preguntar sale bastante más caro que dictar.
-- Y una pregunta de **pensar** sale mucho más cara que una de recordar: entre tres y
-  cinco búsquedas, cada una con su aviso previo, y cada llamada a una herramienta es
-  otra petición al modelo. Por eso el agente tiene `maxIterations: 16`. Si baja de
-  ahí, se corta a mitad de investigar y contesta con lo que lleve, o no contesta.
-  Si el tope diario te aprieta, quitar `avisar_busqueda` recorta casi la mitad.
 - Si el clasificador se equivoca y toma tu pregunta por un dictado, la pregunta
   acaba guardada como nota en el vault. Se borra y ya, pero conviene saberlo antes
   de encontrarte "¿qué tengo mañana?" convertido en una nota.
@@ -475,24 +422,6 @@ olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
   en el índice: la nota estaría cancelada pero el agente aún podría encontrarla al
   buscar. Lo arregla `03b - Reindexar`, que ya salta las canceladas.
 
-- La dirección de Memos, `http://192.168.1.219:5230`, va **escrita en tres sitios**
-  de `02b`: la URL de `buscar_memos`, la de `leer_memo` y la descripción de
-  `buscar_memos`, que es de donde saca el agente cómo montar los enlaces que te da.
-  Si Memos cambia de IP, cambia las tres o te pasará enlaces a una dirección vieja.
-- Con Memos las preguntas salen **más caras todavía**. Cada llamada a una
-  herramienta es una vuelta más al modelo, y `avisar_busqueda` va antes de cada
-  búsqueda y exige esperar su respuesta. Una pregunta que mira en Memos cuesta así
-  cuatro peticiones: clasificar, avisar, buscar y contestar. Si el tope diario te
-  aprieta, `avisar_busqueda` es lo primero que sobra.
-- Las notas de Memos que encuentra el agente **se mandan a Gemini**, igual que lo
-  que recupera de Qdrant. Las privadas también: el token ve todo lo que ve tu cuenta.
-  Si hay algo en Memos que no quieres fuera de casa, usa un token de una cuenta que
-  no lo vea.
-- Las descripciones de `buscar_memos` y `leer_memo` le dicen al modelo que el texto
-  de las notas es un dato y no una orden. Eso reduce el riesgo de que una nota con
-  instrucciones dentro le haga caso, pero no lo elimina. Es otra razón para que el
-  acceso sea solo de lectura.
-
 ## Estructura
 
 ```
@@ -505,7 +434,6 @@ secretario/
 │  ├─ 02b-secretario.json   # transcribir, clasificar, guardar, contestar
 │  ├─ 03a-agenda.json       # herramienta del agente: los eventos del vault
 │  ├─ 03b-reindexar.json    # rehace la colección de qdrant desde el vault
-│  ├─ 03c-buscar-palabras.json  # herramienta del agente: búsqueda literal en el vault
 │  ├─ 04a-avisos.json       # cada 15 min, avisa de lo que se acerca
 │  └─ 04b-resumen.json      # el parte de las 8:00
 ├─ prompts/       # system prompts en ficheros aparte, para versionarlos

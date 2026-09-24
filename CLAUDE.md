@@ -43,7 +43,7 @@ git diff workflows/
 `.mcp.json` apunta al MCP oficial de la instancia y lleva el token en claro: está en
 `.gitignore`, la plantilla es `.mcp.json.example`. Ojo:
 
-- Solo ve los workflows con el acceso MCP activado (ahora mismo 02a, 02b y 03c). El script
+- Solo ve los workflows con el acceso MCP activado (ahora mismo 02a y 02b). El script
   de export usa la API pública y los ve todos.
 - **Cambiar un workflow por MCP cambia el bot real, en producción.** No actives,
   publiques, ejecutes ni borres workflows sin que el usuario lo pida. `02a` está en
@@ -70,10 +70,5 @@ guarda en producción, un único pendiente compartido...). Si descubres una tram
 nueva, añádela ahí con el mismo estilo.
 
 Los Execute Workflow llevan ids que n8n genera al importar; en el repo van como
-`PEGA_AQUI_EL_ID_DE_<prefijo>_<NOMBRE>`. Son cuatro: dos en `02a`, y *Consultar
-la agenda* y *Buscar por palabras* en `02b`.
-
-El agente de preguntas se afina sobre todo en `prompts/03-agente.md`, que distingue
-preguntas de recordar y de pensar. Su `systemMessage` en `02b` solo añade la hora y
-las reglas de Memos y de los avisos. Si añades una herramienta, dala de alta en los
-tres sitios: el prompt, el `systemMessage` y las fuentes de `avisar_busqueda`.
+`PEGA_AQUI_EL_ID_DE_<prefijo>_<NOMBRE>`. Son tres: dos en `02a` y *Consultar la
+agenda* en `02b`.
