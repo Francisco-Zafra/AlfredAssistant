@@ -7,20 +7,19 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
       "position": [
-        -860,
-        300
+        -864,
+        304
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Modo: Run Once for All Items.\n// Avanza el offset, deja constancia del latido y saca UN item, siempre, haya\n// mensajes o no: de ese item cuelga la rellamada que mantiene viva la cadena.\n\nconst estado = $getWorkflowStaticData('global');\nconst respuesta = $input.first().json;\n\nconst updates = (respuesta.ok && Array.isArray(respuesta.result)) ? respuesta.result : [];\n\nlet offset = $('Leer offset').first().json.offset;\nif (updates.length > 0) {\n  offset = Math.max(...updates.map(u => u.update_id)) + 1;\n}\n\nestado.telegramOffset = offset;\nestado.ultimoLatido = Date.now();\n\nreturn [{ json: { offset, updates, hay: updates.length } }];\n",
-        "mode": "runOnceForAllItems"
+        "jsCode": "// Modo: Run Once for All Items.\n// Avanza el offset, deja constancia del latido y saca UN item, siempre, haya\n// mensajes o no: de ese item cuelga la rellamada que mantiene viva la cadena.\n\nconst estado = $getWorkflowStaticData('global');\nconst respuesta = $input.first().json;\n\nconst updates = (respuesta.ok && Array.isArray(respuesta.result)) ? respuesta.result : [];\n\nlet offset = $('Leer offset').first().json.offset;\nif (updates.length > 0) {\n  offset = Math.max(...updates.map(u => u.update_id)) + 1;\n}\n\nestado.telegramOffset = offset;\nestado.ultimoLatido = Date.now();\n\nreturn [{ json: { offset, updates, hay: updates.length } }];\n"
       },
       "name": "Avanzar offset",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        40,
+        48,
         400
       ]
     },
@@ -41,13 +40,12 @@
       "typeVersion": 1.2,
       "position": [
         480,
-        500
+        512
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Modo: Run Once for All Items.\n// El eslabon anterior de la cadena nos pasa el offset ya avanzado en su propia\n// salida. No podemos leerlo de staticData: n8n solo lo guarda al TERMINAR la\n// ejecucion, y para entonces este poll ya habria salido con el valor viejo y\n// reprocesaria los mismos mensajes.\n// Por la rama de rescate no viene nada y ahi si tiramos de staticData.\n\nconst estado = $getWorkflowStaticData('global');\nconst entrada = $input.first()?.json ?? {};\n\nconst offset = Number.isFinite(entrada.offset)\n  ? entrada.offset\n  : (estado.telegramOffset ?? 0);\n\nreturn [{ json: { offset } }];\n",
-        "mode": "runOnceForAllItems"
+        "jsCode": "// Modo: Run Once for All Items.\n// El eslabon anterior de la cadena nos pasa el offset ya avanzado en su propia\n// salida. No podemos leerlo de staticData: n8n solo lo guarda al TERMINAR la\n// ejecucion, y para entonces este poll ya habria salido con el valor viejo y\n// reprocesaria los mismos mensajes.\n// Por la rama de rescate no viene nada y ahi si tiramos de staticData.\n\nconst estado = $getWorkflowStaticData('global');\nconst entrada = $input.first()?.json ?? {};\n\nconst offset = Number.isFinite(entrada.offset)\n  ? entrada.offset\n  : (estado.telegramOffset ?? 0);\n\nreturn [{ json: { offset } }];\n"
       },
       "name": "Leer offset",
       "type": "n8n-nodes-base.code",
@@ -59,15 +57,14 @@
     },
     {
       "parameters": {
-        "jsCode": "// Modo: Run Once for All Items.\n// Puerta de entrada y normalizacion. Un item por cosa que haya que atender.\n\nconst PERMITIDO = Number($env.TELEGRAM_ALLOWED_USER_ID);\n\nif (!Number.isFinite(PERMITIDO) || PERMITIDO === 0) {\n  throw new Error('TELEGRAM_ALLOWED_USER_ID no esta definido en el contenedor de n8n');\n}\n\nconst updates = $input.first().json.updates ?? [];\nconst salida = [];\n\nfor (const u of updates) {\n  // Boton de confirmacion pulsado.\n  if (u.callback_query) {\n    const cq = u.callback_query;\n    if (cq.from?.id !== PERMITIDO) continue;\n    salida.push({\n      json: {\n        update_id: u.update_id,\n        clase: 'callback',\n        callback_id: cq.id,\n        chat_id: cq.message?.chat?.id ?? null,\n        message_id: cq.message?.message_id ?? null,\n        datos: cq.data ?? '',\n      },\n    });\n    continue;\n  }\n\n  const msg = u.message;\n  if (!msg) continue;\n  if (msg.from?.id !== PERMITIDO) continue;\n\n  salida.push({\n    json: {\n      update_id: u.update_id,\n      clase: 'mensaje',\n      chat_id: msg.chat.id,\n      message_id: msg.message_id,\n      fecha: new Date(msg.date * 1000).toISOString(),\n      tipo: msg.voice ? 'voz' : (msg.text ? 'texto' : 'otro'),\n      texto: msg.text ?? null,\n      voice_file_id: msg.voice?.file_id ?? null,\n      voice_duracion: msg.voice?.duration ?? null,\n    },\n  });\n}\n\nreturn salida;\n",
-        "mode": "runOnceForAllItems"
+        "jsCode": "// Modo: Run Once for All Items.\n// Puerta de entrada y normalizacion. Un item por cosa que haya que atender.\n\nconst PERMITIDO = Number($env.TELEGRAM_ALLOWED_USER_ID);\n\nif (!Number.isFinite(PERMITIDO) || PERMITIDO === 0) {\n  throw new Error('TELEGRAM_ALLOWED_USER_ID no esta definido en el contenedor de n8n');\n}\n\nconst updates = $input.first().json.updates ?? [];\nconst salida = [];\n\nfor (const u of updates) {\n  // Boton de confirmacion pulsado.\n  if (u.callback_query) {\n    const cq = u.callback_query;\n    if (cq.from?.id !== PERMITIDO) continue;\n    salida.push({\n      json: {\n        update_id: u.update_id,\n        clase: 'callback',\n        callback_id: cq.id,\n        chat_id: cq.message?.chat?.id ?? null,\n        message_id: cq.message?.message_id ?? null,\n        datos: cq.data ?? '',\n      },\n    });\n    continue;\n  }\n\n  const msg = u.message;\n  if (!msg) continue;\n  if (msg.from?.id !== PERMITIDO) continue;\n\n  salida.push({\n    json: {\n      update_id: u.update_id,\n      clase: 'mensaje',\n      chat_id: msg.chat.id,\n      message_id: msg.message_id,\n      fecha: new Date(msg.date * 1000).toISOString(),\n      tipo: msg.voice ? 'voz' : (msg.text ? 'texto' : 'otro'),\n      texto: msg.text ?? null,\n      voice_file_id: msg.voice?.file_id ?? null,\n      voice_duracion: msg.voice?.duration ?? null,\n    },\n  });\n}\n\nreturn salida;\n"
       },
       "name": "Repartir updates",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        260,
-        500
+        272,
+        512
       ]
     },
     {
@@ -85,26 +82,24 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        -860,
-        520
+        -864,
+        528
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Modo: Run Once for All Items.\n// Solo corre por la rama del Schedule de rescate. Si la cadena sigue viva no\n// arrancamos otra: dos getUpdates a la vez sobre el mismo bot son un 409.\n\nconst MAX_SILENCIO_MS = 120 * 1000;\n\nconst estado = $getWorkflowStaticData('global');\nconst ultimo = estado.ultimoLatido ?? 0;\n\nif (Date.now() - ultimo < MAX_SILENCIO_MS) {\n  return [];   // hay latido reciente, no tocamos nada\n}\n\nreturn [{ json: { rescate: true } }];\n",
-        "mode": "runOnceForAllItems"
+        "jsCode": "// Modo: Run Once for All Items.\n// Solo corre por la rama del Schedule de rescate. Si la cadena sigue viva no\n// arrancamos otra: dos getUpdates a la vez sobre el mismo bot son un 409.\n\nconst MAX_SILENCIO_MS = 120 * 1000;\n\nconst estado = $getWorkflowStaticData('global');\nconst ultimo = estado.ultimoLatido ?? 0;\n\nif (Date.now() - ultimo < MAX_SILENCIO_MS) {\n  return [];   // hay latido reciente, no tocamos nada\n}\n\nreturn [{ json: { rescate: true } }];\n"
       },
       "name": "Se ha parado la cadena",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         -640,
-        520
+        528
       ]
     },
     {
       "parameters": {
-        "mode": "once",
         "options": {
           "waitForSubWorkflow": false
         },
@@ -112,14 +107,22 @@
           "__rl": true,
           "mode": "id",
           "value": "PEGA_AQUI_EL_ID_DE_02a_ESCUCHA"
+        },
+        "workflowInputs": {
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true,
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [],
+          "value": {}
         }
       },
       "name": "Volver a escuchar",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        260,
-        280
+        272,
+        288
       ]
     },
     {
@@ -150,7 +153,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -180,
+        -176,
         400
       ]
     }
@@ -241,7 +244,8 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "timezone": "Europe/Madrid"
+    "timezone": "Europe/Madrid",
+    "binaryMode": "separate"
   },
   "pinData": {}
 }

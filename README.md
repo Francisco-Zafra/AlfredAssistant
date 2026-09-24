@@ -42,6 +42,17 @@ red interna de Docker:
 | Qdrant | URL | `http://qdrant:6333` (API key en blanco) |
 | Ollama | Base URL | `http://ollama:11434` |
 
+Si usas [Memos](#memos), hay una cuarta, esta sí con secreto: una **Header Auth**
+llamada `Memos`, con *Name* `Authorization` y *Value* `Bearer <token>`. El token se
+saca en Memos, en *Settings > My Account > Access Tokens*. Asígnala a los nodos
+`buscar_memos` y `leer_memo` de `02b`.
+
+Y una quinta, para que el "escribiendo…" no se apague mientras el agente piensa (ver
+[El latido](#el-latido)): una **n8n API** llamada `n8n API`, con *Base URL*
+`http://localhost:5678/api/v1` y como *API Key* la que generas en n8n, en *Settings >
+n8n API*. Va en el nodo *Mirar la pregunta* de `02b`. Sin ella, `02b` no se deja
+publicar.
+
 Los system prompts viven en `prompts/`, montado en el contenedor como `/prompts`
 en solo lectura. Los workflows los leen en ejecución, así que para cambiar un
 prompt basta con editar el fichero: no hay que tocar ni reimportar el JSON.
@@ -88,8 +99,9 @@ Da igual dictar que escribir: el mensaje escrito se salta Whisper y entra en el
 mismo sitio, solo que el prompt sabe que ese texto no trae ruido de transcripción
 y no hay que guardar el original aparte.
 
-Cuando el mensaje es una pregunta en vez de un dictado, entra un **AI Agent** con dos
-herramientas: buscar en Qdrant y leer la agenda del vault. De distinguir pregunta de
+Cuando el mensaje es una pregunta en vez de un dictado, entra un **AI Agent** con sus
+herramientas: buscar en Qdrant, leer la agenda del vault y, si lo tienes, buscar y
+leer en [Memos](#memos). De distinguir pregunta de
 dictado se encarga el mismo prompt que ya clasificaba, que devuelve `tipo:
 "pregunta"`. Un router aparte habría sido más limpio, pero son dos peticiones al
 modelo en vez de una y el tope diario de Gemini se cuenta por peticiones.
@@ -144,6 +156,50 @@ silenciado. Es a propósito: si Ollama está ocupado o Qdrant no arranca, prefie
 que la nota llegue al disco y que la respuesta salga, aunque se quede sin indexar.
 El precio es que no te enteras. Si el bot dice que no encuentra algo que juras haber
 apuntado, reindexa antes de dar por rota la memoria.
+
+## Memos
+
+Si ya tienes notas en una instancia de [Memos](https://usememos.com), el agente
+también puede consultarlas. No está en el compose: es un servicio aparte en la LAN,
+y el bot solo lo **lee**. Nada de lo que dictas va a Memos, y nada de Memos entra en
+el vault ni en Qdrant.
+
+Son tres herramientas del agente en `02b`, las tres nodos HTTP Request Tool:
+
+| Herramienta | Qué hace |
+|---|---|
+| `buscar_memos` | Lista o filtra notas con la API de Memos (`GET /api/v1/memos`), con filtros CEL como `content.contains("receta")`. Diez por página. |
+| `leer_memo` | Lee una nota concreta por su `name` (`memos/abc123`). |
+| `avisar_busqueda` | Te manda por Telegram un *"🔎 Voy a buscar en Memos…"* silencioso antes de cada consulta, para que la espera no parezca un bot colgado. |
+
+`avisar_busqueda` no es solo de Memos: el agente lo usa antes de cualquier fuente,
+también Qdrant y la agenda. Por eso cuelga del agente aunque no uses Memos, y
+funciona sin configurar nada.
+
+Si no usas Memos, borra `buscar_memos` y `leer_memo` y quita las menciones de las
+descripciones de `avisar_busqueda`. Si los dejas sin credencial, el agente los
+seguirá intentando y fallarán en cada pregunta.
+
+## El latido
+
+Telegram quita el "escribiendo…" a los cinco segundos, o en cuanto el bot manda
+cualquier mensaje, avisos de búsqueda incluidos. Una pregunta tarda más que eso, y un
+chat mudo no se distingue de un bot caído.
+
+Mandarlo cada pocos segundos desde la propia pregunta no se puede: mientras el nodo
+*Agente* piensa, esa ejecución está esperándole y no corre nada más. Así que `02b` se
+**llama a sí mismo** sin esperar, con `latido: true`, y esa segunda ejecución solo
+hace una cosa: cada 4 segundos pregunta a n8n cómo va la primera y, si sigue en
+marcha, manda otro "escribiendo…".
+
+- Si la pregunta termina bien, el latido se calla. Mira antes de mandar, así que no
+  deja un "escribiendo…" colgado después de la respuesta.
+- Si la pregunta termina con error, te llega un *"⚠️ Algo ha fallado con tu
+  pregunta"*. Es lo que el silencio no te dejaba saber.
+- A los tres minutos se rinde, pase lo que pase.
+
+Solo se lanza para preguntas, que es donde se espera. Dictar una nota tarda poco, y
+el "escribiendo…" de siempre llega.
 
 ## Cancelar y olvidar
 
@@ -343,6 +399,15 @@ olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
   quedan caducados y te lo dice al pulsarlos. Caducan también a los 30 minutos.
 - Whisper `small` con int8 se come sobre 2 GB mientras transcribe. Es el pico de RAM
   del stack.
+- El latido lee el estado de la pregunta por la API de n8n, con la credencial
+  `n8n API`. Si esa key caduca o la borras, el latido se calla en la primera vuelta:
+  el "escribiendo…" vuelve a durar cinco segundos y los fallos vuelven a ser
+  silenciosos, sin ningún error a la vista.
+- Por la misma razón, cada pregunta deja **dos** ejecuciones de `02b` en el
+  historial: la que contesta y su latido. Es normal. El latido no gasta peticiones a
+  Gemini.
+- `latido: true` en la entrada de `02b` está reservado. Si algún día otro workflow
+  le pasa ese campo, `02b` lo tomará por un latido y no procesará el mensaje.
 - Al meter fechas relativas, pásale al prompt la fecha y hora actuales. Si no, el
   modelo no sabe qué significa "mañana".
 
@@ -421,6 +486,24 @@ olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
 - Si Qdrant no responde al cancelar, el `.md` queda marcado igual y el punto se queda
   en el índice: la nota estaría cancelada pero el agente aún podría encontrarla al
   buscar. Lo arregla `03b - Reindexar`, que ya salta las canceladas.
+
+- La dirección de Memos, `http://192.168.1.219:5230`, va **escrita en tres sitios**
+  de `02b`: la URL de `buscar_memos`, la de `leer_memo` y la descripción de
+  `buscar_memos`, que es de donde saca el agente cómo montar los enlaces que te da.
+  Si Memos cambia de IP, cambia las tres o te pasará enlaces a una dirección vieja.
+- Con Memos las preguntas salen **más caras todavía**. Cada llamada a una
+  herramienta es una vuelta más al modelo, y `avisar_busqueda` va antes de cada
+  búsqueda y exige esperar su respuesta. Una pregunta que mira en Memos cuesta así
+  cuatro peticiones: clasificar, avisar, buscar y contestar. Si el tope diario te
+  aprieta, `avisar_busqueda` es lo primero que sobra.
+- Las notas de Memos que encuentra el agente **se mandan a Gemini**, igual que lo
+  que recupera de Qdrant. Las privadas también: el token ve todo lo que ve tu cuenta.
+  Si hay algo en Memos que no quieres fuera de casa, usa un token de una cuenta que
+  no lo vea.
+- Las descripciones de `buscar_memos` y `leer_memo` le dicen al modelo que el texto
+  de las notas es un dato y no una orden. Eso reduce el riesgo de que una nota con
+  instrucciones dentro le haga caso, pero no lo elimina. Es otra razón para que el
+  acceso sea solo de lectura.
 
 ## Estructura
 

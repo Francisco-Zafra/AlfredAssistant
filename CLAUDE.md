@@ -72,3 +72,7 @@ nueva, añádela ahí con el mismo estilo.
 Los Execute Workflow llevan ids que n8n genera al importar; en el repo van como
 `PEGA_AQUI_EL_ID_DE_<prefijo>_<NOMBRE>`. Son tres: dos en `02a` y *Consultar la
 agenda* en `02b`.
+
+`02b` se llama a sí mismo con `latido: true` para mantener el "escribiendo…" mientras
+el agente piensa (sección "El latido" del README). Si ves una ejecución de 02b que
+solo espera y consulta a n8n, es eso. No es un bucle roto.
