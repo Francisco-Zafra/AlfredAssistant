@@ -3,6 +3,37 @@
   "nodes": [
     {
       "parameters": {
+        "jsonBody": "={{ JSON.stringify({ chat_id: $json.chat_id, text: $json.texto }) }}",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage"
+      },
+      "name": "Avisar por Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        140
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "function leerVault() {\n  // El texto lo resuelve el nodo \"Extraer el texto\", pero ese nodo se queda\n  // SOLO con la clave que le pides y tira el resto del json, el nombre del\n  // fichero incluido. Hay que ir a buscarlo al nodo de lectura, que saca los\n  // items en el mismo orden, y emparejarlos por posicion.\n  const leidos = $('Leer el vault').all();\n  const ficheros = [];\n  $input.all().forEach((item, i) => {\n    const j = item.json ?? {};\n    if (typeof j.contenido !== 'string' || !j.contenido) return;\n    const src = leidos[i] ?? {};\n    const nombre = src.json?.fileName ?? src.binary?.data?.fileName;\n    // Sin nombre no se puede ni marcar el fichero ni citarlo: mejor saltarlo\n    // que escribir en un sitio inventado.\n    if (!nombre) return;\n    ficheros.push({ nombre, texto: j.contenido });\n  });\n  return ficheros;\n}\n\nfunction frontmatter(texto) {\n  // Un parser de YAML de tres lineas. Solo hay que leer lo que escribe\n  // \"Componer nota\", que son pares clave: valor planos.\n  const m = texto.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);\n  if (!m) return {};\n  const campos = {};\n  for (const linea of m[1].split(/\\r?\\n/)) {\n    const i = linea.indexOf(':');\n    if (i === -1) continue;\n    const clave = linea.slice(0, i).trim();\n    let valor = linea.slice(i + 1).trim();\n    if (valor.startsWith('\"') && valor.endsWith('\"')) {\n      valor = valor.slice(1, -1).replace(/\\\\\"/g, '\"');\n    }\n    campos[clave] = valor;\n  }\n  return campos;\n}\n\nconst DIAS = ['lunes', 'martes', 'mi\u00e9rcoles', 'jueves', 'viernes', 's\u00e1bado', 'domingo'];\nconst MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',\n               'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];\n\nfunction chatPermitido() {\n  // En un chat privado el chat_id es tu propio user id, asi que no hace falta\n  // guardarlo en ningun sitio: ya esta en el entorno desde la fase 1.\n  const c = $env.TELEGRAM_ALLOWED_USER_ID;\n  if (!c) throw new Error('TELEGRAM_ALLOWED_USER_ID no esta definido en el contenedor de n8n');\n  return Number(c);\n}\n\nfunction marcarAvisado(texto) {\n  if (/^avisado:/m.test(texto)) {\n    return texto.replace(/^avisado:.*$/m, 'avisado: true');\n  }\n  // Nota anterior a la fase 4, sin el campo. Si no se lo metemos, no hay forma\n  // de marcarla y te avisaria cada quince minutos para siempre.\n  return texto.replace(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/,\n    (m, cuerpo) => '---\\n' + cuerpo + '\\navisado: true\\n---');\n}\n\n// Modo: Run Once for All Items.\n// Saca un item por evento que toque avisar ahora. Cada item lleva ya el texto\n// del fichero con \"avisado: true\" puesto, para escribirlo despues sin volver a\n// leerlo del disco.\n\n// Cuanta antelacion quieres. Con el Schedule cada 15 minutos, el aviso te\n// llega entre 45 y 60 minutos antes.\nconst ANTELACION_MIN = 60;\n// Ventana hacia atras, para los que se escaparon con el bot parado. Sin esto,\n// un corte de una hora te deja sin avisar y sin enterarte.\nconst RETRASO_MAX_MIN = 120;\n\nconst chat = chatPermitido();\nconst ahora = DateTime.now().setZone('Europe/Madrid');\nconst desde = ahora.minus({ minutes: RETRASO_MAX_MIN });\nconst hasta = ahora.plus({ minutes: ANTELACION_MIN });\n\nconst salida = [];\n\nfor (const f of leerVault()) {\n  const fm = frontmatter(f.texto);\n  // Una nota cancelada sigue en el vault, pero no cuenta para nada: ni agenda,\n  // ni avisos, ni busqueda. Ahi esta por si te arrepientes, y nada mas.\n  if (String(fm.cancelado).trim() === 'true') continue;\n  if (!fm.cuando) continue;                              // sin fecha no es evento\n  if (String(fm.avisado).trim() === 'true') continue;    // ya avisado\n  const d = DateTime.fromISO(fm.cuando, { zone: 'Europe/Madrid' });\n  if (!d.isValid || d < desde || d > hasta) continue;\n\n  const titulo = fm.titulo || f.nombre.replace(/\\.md$/, '');\n  const faltan = Math.round(d.diff(ahora, 'minutes').minutes);\n  const hora = d.toFormat('HH:mm');\n\n  const texto = faltan >= 0\n    ? '\u23f0 Dentro de ' + faltan + ' min: ' + titulo + '\\nA las ' + hora + '.'\n    : '\u23f0 Se te ha pasado hace ' + Math.abs(faltan) + ' min: ' + titulo +\n      '\\nEra a las ' + hora + '.';\n\n  salida.push({\n    json: {\n      chat_id: chat,\n      fichero: f.nombre,\n      titulo,\n      texto,\n      contenido: marcarAvisado(f.texto),\n    },\n  });\n}\n\nreturn salida;\n",
+        "mode": "runOnceForAllItems"
+      },
+      "name": "Buscar eventos que tocan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
         "rule": {
           "interval": [
             {
@@ -22,8 +53,40 @@
     },
     {
       "parameters": {
-        "operation": "read",
+        "binaryPropertyName": "data",
+        "destinationKey": "contenido",
+        "operation": "text",
+        "options": {
+          "destinationKey": "contenido"
+        }
+      },
+      "name": "Extraer el texto",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        40,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "dataPropertyName": "data",
+        "fileName": "=/vault/{{ $('Buscar eventos que tocan').item.json.fichero }}",
+        "operation": "write",
+        "options": {}
+      },
+      "name": "Guardar la marca",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        700,
+        440
+      ]
+    },
+    {
+      "parameters": {
         "fileSelector": "/vault/*.md",
+        "operation": "read",
         "options": {
           "dataPropertyName": "data"
         }
@@ -39,60 +102,12 @@
     },
     {
       "parameters": {
-        "operation": "text",
-        "binaryPropertyName": "data",
-        "destinationKey": "contenido",
-        "options": {
-          "destinationKey": "contenido"
-        }
-      },
-      "name": "Extraer el texto",
-      "type": "n8n-nodes-base.extractFromFile",
-      "typeVersion": 1,
-      "position": [
-        40,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "function leerVault() {\n  // El texto lo resuelve el nodo \"Extraer el texto\", pero ese nodo se queda\n  // SOLO con la clave que le pides y tira el resto del json, el nombre del\n  // fichero incluido. Hay que ir a buscarlo al nodo de lectura, que saca los\n  // items en el mismo orden, y emparejarlos por posicion.\n  const leidos = $('Leer el vault').all();\n  const ficheros = [];\n  $input.all().forEach((item, i) => {\n    const j = item.json ?? {};\n    if (typeof j.contenido !== 'string' || !j.contenido) return;\n    const src = leidos[i] ?? {};\n    const nombre = src.json?.fileName ?? src.binary?.data?.fileName;\n    // Sin nombre no se puede ni marcar el fichero ni citarlo: mejor saltarlo\n    // que escribir en un sitio inventado.\n    if (!nombre) return;\n    ficheros.push({ nombre, texto: j.contenido });\n  });\n  return ficheros;\n}\n\nfunction frontmatter(texto) {\n  // Un parser de YAML de tres lineas. Solo hay que leer lo que escribe\n  // \"Componer nota\", que son pares clave: valor planos.\n  const m = texto.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);\n  if (!m) return {};\n  const campos = {};\n  for (const linea of m[1].split(/\\r?\\n/)) {\n    const i = linea.indexOf(':');\n    if (i === -1) continue;\n    const clave = linea.slice(0, i).trim();\n    let valor = linea.slice(i + 1).trim();\n    if (valor.startsWith('\"') && valor.endsWith('\"')) {\n      valor = valor.slice(1, -1).replace(/\\\\\"/g, '\"');\n    }\n    campos[clave] = valor;\n  }\n  return campos;\n}\n\nconst DIAS = ['lunes', 'martes', 'mi\u00e9rcoles', 'jueves', 'viernes', 's\u00e1bado', 'domingo'];\nconst MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',\n               'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];\n\nfunction chatPermitido() {\n  // En un chat privado el chat_id es tu propio user id, asi que no hace falta\n  // guardarlo en ningun sitio: ya esta en el entorno desde la fase 1.\n  const c = $env.TELEGRAM_ALLOWED_USER_ID;\n  if (!c) throw new Error('TELEGRAM_ALLOWED_USER_ID no esta definido en el contenedor de n8n');\n  return Number(c);\n}\n\nfunction marcarAvisado(texto) {\n  if (/^avisado:/m.test(texto)) {\n    return texto.replace(/^avisado:.*$/m, 'avisado: true');\n  }\n  // Nota anterior a la fase 4, sin el campo. Si no se lo metemos, no hay forma\n  // de marcarla y te avisaria cada quince minutos para siempre.\n  return texto.replace(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/,\n    (m, cuerpo) => '---\\n' + cuerpo + '\\navisado: true\\n---');\n}\n\n// Modo: Run Once for All Items.\n// Saca un item por evento que toque avisar ahora. Cada item lleva ya el texto\n// del fichero con \"avisado: true\" puesto, para escribirlo despues sin volver a\n// leerlo del disco.\n\n// Cuanta antelacion quieres. Con el Schedule cada 15 minutos, el aviso te\n// llega entre 45 y 60 minutos antes.\nconst ANTELACION_MIN = 60;\n// Ventana hacia atras, para los que se escaparon con el bot parado. Sin esto,\n// un corte de una hora te deja sin avisar y sin enterarte.\nconst RETRASO_MAX_MIN = 120;\n\nconst chat = chatPermitido();\nconst ahora = DateTime.now().setZone('Europe/Madrid');\nconst desde = ahora.minus({ minutes: RETRASO_MAX_MIN });\nconst hasta = ahora.plus({ minutes: ANTELACION_MIN });\n\nconst salida = [];\n\nfor (const f of leerVault()) {\n  const fm = frontmatter(f.texto);\n  // Una nota cancelada sigue en el vault, pero no cuenta para nada: ni agenda,\n  // ni avisos, ni busqueda. Ahi esta por si te arrepientes, y nada mas.\n  if (String(fm.cancelado).trim() === 'true') continue;\n  if (!fm.cuando) continue;                              // sin fecha no es evento\n  if (String(fm.avisado).trim() === 'true') continue;    // ya avisado\n  const d = DateTime.fromISO(fm.cuando, { zone: 'Europe/Madrid' });\n  if (!d.isValid || d < desde || d > hasta) continue;\n\n  const titulo = fm.titulo || f.nombre.replace(/\\.md$/, '');\n  const faltan = Math.round(d.diff(ahora, 'minutes').minutes);\n  const hora = d.toFormat('HH:mm');\n\n  const texto = faltan >= 0\n    ? '\u23f0 Dentro de ' + faltan + ' min: ' + titulo + '\\nA las ' + hora + '.'\n    : '\u23f0 Se te ha pasado hace ' + Math.abs(faltan) + ' min: ' + titulo +\n      '\\nEra a las ' + hora + '.';\n\n  salida.push({\n    json: {\n      chat_id: chat,\n      fichero: f.nombre,\n      titulo,\n      texto,\n      contenido: marcarAvisado(f.texto),\n    },\n  });\n}\n\nreturn salida;\n"
-      },
-      "name": "Buscar eventos que tocan",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        260,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ chat_id: $json.chat_id, text: $json.texto }) }}",
-        "options": {}
-      },
-      "name": "Avisar por Telegram",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        480,
-        140
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
         "operation": "toText",
-        "sourceProperty": "contenido",
         "options": {
           "encoding": "utf8",
           "fileName": "={{ $json.fichero }}"
-        }
+        },
+        "sourceProperty": "contenido"
       },
       "name": "Nota con la marca",
       "type": "n8n-nodes-base.convertToFile",
@@ -101,40 +116,30 @@
         480,
         440
       ]
-    },
-    {
-      "parameters": {
-        "operation": "write",
-        "fileName": "=/vault/{{ $('Buscar eventos que tocan').item.json.fichero }}",
-        "dataPropertyName": "data",
-        "options": {}
-      },
-      "name": "Guardar la marca",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
-      "position": [
-        700,
-        440
-      ]
     }
   ],
   "connections": {
-    "Cada quince minutos": {
+    "Buscar eventos que tocan": {
       "main": [
         [
           {
-            "node": "Leer el vault",
+            "node": "Avisar por Telegram",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Nota con la marca",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Leer el vault": {
+    "Cada quince minutos": {
       "main": [
         [
           {
-            "node": "Extraer el texto",
+            "node": "Leer el vault",
             "type": "main",
             "index": 0
           }
@@ -152,16 +157,11 @@
         ]
       ]
     },
-    "Buscar eventos que tocan": {
+    "Leer el vault": {
       "main": [
         [
           {
-            "node": "Avisar por Telegram",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Nota con la marca",
+            "node": "Extraer el texto",
             "type": "main",
             "index": 0
           }
@@ -182,6 +182,7 @@
   },
   "settings": {
     "executionOrder": "v1",
+    "binaryMode": "separate",
     "timezone": "Europe/Madrid"
   },
   "pinData": {}

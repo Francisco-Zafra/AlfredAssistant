@@ -7,3 +7,7 @@ vault/*
 
 # Exports de n8n con credenciales dentro por accidente
 workflows/*.local.json
+
+# Lleva el token del MCP de n8n en claro. La plantilla es .mcp.json.example
+.mcp.json
+__pycache__/

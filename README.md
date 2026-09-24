@@ -440,7 +440,7 @@ secretario/
 │  ├─ 01-limpiar-transcripcion.md
 │  ├─ 02-clasificar.md
 │  └─ 03-agente.md
-├─ scripts/       # limpiar los exports de n8n antes de subirlos
+├─ scripts/       # exportar-workflows.py baja n8n al repo; limpiar-workflow.py, los exports a mano
 ├─ docs/
 └─ vault/         # tus notas (en .gitignore)
 ```

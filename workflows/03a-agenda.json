@@ -2,19 +2,26 @@
   "name": "03a - Agenda",
   "nodes": [
     {
-      "parameters": {},
-      "name": "Pregunta del agente",
-      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "parameters": {
+        "binaryPropertyName": "data",
+        "destinationKey": "contenido",
+        "operation": "text",
+        "options": {
+          "destinationKey": "contenido"
+        }
+      },
+      "name": "Extraer el texto",
+      "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
       "position": [
-        -400,
+        40,
         300
       ]
     },
     {
       "parameters": {
-        "operation": "read",
         "fileSelector": "/vault/*.md",
+        "operation": "read",
         "options": {
           "dataPropertyName": "data"
         }
@@ -30,8 +37,8 @@
     },
     {
       "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "function leerVault() {\n  // El texto lo resuelve el nodo \"Extraer el texto\", pero ese nodo se queda\n  // SOLO con la clave que le pides y tira el resto del json, el nombre del\n  // fichero incluido. Hay que ir a buscarlo al nodo de lectura, que saca los\n  // items en el mismo orden, y emparejarlos por posicion.\n  const leidos = $('Leer el vault').all();\n  const ficheros = [];\n  $input.all().forEach((item, i) => {\n    const j = item.json ?? {};\n    if (typeof j.contenido !== 'string' || !j.contenido) return;\n    const src = leidos[i] ?? {};\n    const nombre = src.json?.fileName ?? src.binary?.data?.fileName;\n    // Sin nombre no se puede ni marcar el fichero ni citarlo: mejor saltarlo\n    // que escribir en un sitio inventado.\n    if (!nombre) return;\n    ficheros.push({ nombre, texto: j.contenido });\n  });\n  return ficheros;\n}\n\nfunction frontmatter(texto) {\n  // Un parser de YAML de tres lineas. Solo hay que leer lo que escribe\n  // \"Componer nota\", que son pares clave: valor planos.\n  const m = texto.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);\n  if (!m) return {};\n  const campos = {};\n  for (const linea of m[1].split(/\\r?\\n/)) {\n    const i = linea.indexOf(':');\n    if (i === -1) continue;\n    const clave = linea.slice(0, i).trim();\n    let valor = linea.slice(i + 1).trim();\n    if (valor.startsWith('\"') && valor.endsWith('\"')) {\n      valor = valor.slice(1, -1).replace(/\\\\\"/g, '\"');\n    }\n    campos[clave] = valor;\n  }\n  return campos;\n}\n\n// Modo: Run Once for All Items.\n// Herramienta \"agenda\" del agente. Lee el vault y devuelve los eventos con\n// fecha en una ventana alrededor de hoy, ya ordenados y en texto: al modelo le\n// sale mejor leer una lista de frases que un JSON con fechas ISO.\n\nconst DIAS = ['lunes', 'martes', 'mi\u00e9rcoles', 'jueves', 'viernes', 's\u00e1bado', 'domingo'];\nconst MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',\n               'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];\n\nconst ahora = DateTime.now().setZone('Europe/Madrid');\n// Una semana hacia atras para poder contestar \"\u00bfno era ayer lo del dentista?\",\n// y dos meses hacia delante, que es hasta donde llega una agenda personal.\nconst desde = ahora.minus({ days: 7 });\nconst hasta = ahora.plus({ days: 60 });\n\nconst eventos = [];\nfor (const f of leerVault()) {\n  const fm = frontmatter(f.texto);\n  // Una nota cancelada sigue en el vault, pero no cuenta para nada: ni agenda,\n  // ni avisos, ni busqueda. Ahi esta por si te arrepientes, y nada mas.\n  if (String(fm.cancelado).trim() === 'true') continue;\n  if (!fm.cuando) continue;                  // sin fecha no es evento\n  const d = DateTime.fromISO(fm.cuando, { zone: 'Europe/Madrid' });\n  if (!d.isValid || d < desde || d > hasta) continue;\n  eventos.push({ d, titulo: fm.titulo || f.nombre, fichero: f.nombre });\n}\n\neventos.sort((a, b) => a.d.toMillis() - b.d.toMillis());\n\nconst lineas = eventos.map((e) => {\n  const cuando = DIAS[e.d.weekday - 1] + ' ' + e.d.day + ' de ' +\n    MESES[e.d.month - 1] + ' de ' + e.d.year + ' a las ' + e.d.toFormat('HH:mm');\n  return '- ' + cuando + (e.d < ahora ? ' (ya pas\u00f3)' : '') + ': ' + e.titulo;\n});\n\nconst cabecera = 'Hoy es ' + DIAS[ahora.weekday - 1] + ' ' +\n  ahora.toFormat('dd/LL/yyyy') + ' y son las ' + ahora.toFormat('HH:mm') + '.';\n\nconst respuesta = lineas.length\n  ? cabecera + '\\nEventos apuntados entre el ' + desde.toFormat('dd/LL') +\n    ' y el ' + hasta.toFormat('dd/LL') + ':\\n' + lineas.join('\\n')\n  : cabecera + '\\nNo hay ning\u00fan evento apuntado entre el ' +\n    desde.toFormat('dd/LL') + ' y el ' + hasta.toFormat('dd/LL') + '.';\n\nreturn [{ json: { response: respuesta } }];\n"
+        "jsCode": "function leerVault() {\n  // El texto lo resuelve el nodo \"Extraer el texto\", pero ese nodo se queda\n  // SOLO con la clave que le pides y tira el resto del json, el nombre del\n  // fichero incluido. Hay que ir a buscarlo al nodo de lectura, que saca los\n  // items en el mismo orden, y emparejarlos por posicion.\n  const leidos = $('Leer el vault').all();\n  const ficheros = [];\n  $input.all().forEach((item, i) => {\n    const j = item.json ?? {};\n    if (typeof j.contenido !== 'string' || !j.contenido) return;\n    const src = leidos[i] ?? {};\n    const nombre = src.json?.fileName ?? src.binary?.data?.fileName;\n    // Sin nombre no se puede ni marcar el fichero ni citarlo: mejor saltarlo\n    // que escribir en un sitio inventado.\n    if (!nombre) return;\n    ficheros.push({ nombre, texto: j.contenido });\n  });\n  return ficheros;\n}\n\nfunction frontmatter(texto) {\n  // Un parser de YAML de tres lineas. Solo hay que leer lo que escribe\n  // \"Componer nota\", que son pares clave: valor planos.\n  const m = texto.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);\n  if (!m) return {};\n  const campos = {};\n  for (const linea of m[1].split(/\\r?\\n/)) {\n    const i = linea.indexOf(':');\n    if (i === -1) continue;\n    const clave = linea.slice(0, i).trim();\n    let valor = linea.slice(i + 1).trim();\n    if (valor.startsWith('\"') && valor.endsWith('\"')) {\n      valor = valor.slice(1, -1).replace(/\\\\\"/g, '\"');\n    }\n    campos[clave] = valor;\n  }\n  return campos;\n}\n\n// Modo: Run Once for All Items.\n// Herramienta \"agenda\" del agente. Lee el vault y devuelve los eventos con\n// fecha en una ventana alrededor de hoy, ya ordenados y en texto: al modelo le\n// sale mejor leer una lista de frases que un JSON con fechas ISO.\n\nconst DIAS = ['lunes', 'martes', 'mi\u00e9rcoles', 'jueves', 'viernes', 's\u00e1bado', 'domingo'];\nconst MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',\n               'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];\n\nconst ahora = DateTime.now().setZone('Europe/Madrid');\n// Una semana hacia atras para poder contestar \"\u00bfno era ayer lo del dentista?\",\n// y dos meses hacia delante, que es hasta donde llega una agenda personal.\nconst desde = ahora.minus({ days: 7 });\nconst hasta = ahora.plus({ days: 60 });\n\nconst eventos = [];\nfor (const f of leerVault()) {\n  const fm = frontmatter(f.texto);\n  // Una nota cancelada sigue en el vault, pero no cuenta para nada: ni agenda,\n  // ni avisos, ni busqueda. Ahi esta por si te arrepientes, y nada mas.\n  if (String(fm.cancelado).trim() === 'true') continue;\n  if (!fm.cuando) continue;                  // sin fecha no es evento\n  const d = DateTime.fromISO(fm.cuando, { zone: 'Europe/Madrid' });\n  if (!d.isValid || d < desde || d > hasta) continue;\n  eventos.push({ d, titulo: fm.titulo || f.nombre, fichero: f.nombre });\n}\n\neventos.sort((a, b) => a.d.toMillis() - b.d.toMillis());\n\nconst lineas = eventos.map((e) => {\n  const cuando = DIAS[e.d.weekday - 1] + ' ' + e.d.day + ' de ' +\n    MESES[e.d.month - 1] + ' de ' + e.d.year + ' a las ' + e.d.toFormat('HH:mm');\n  return '- ' + cuando + (e.d < ahora ? ' (ya pas\u00f3)' : '') + ': ' + e.titulo;\n});\n\nconst cabecera = 'Hoy es ' + DIAS[ahora.weekday - 1] + ' ' +\n  ahora.toFormat('dd/LL/yyyy') + ' y son las ' + ahora.toFormat('HH:mm') + '.';\n\nconst respuesta = lineas.length\n  ? cabecera + '\\nEventos apuntados entre el ' + desde.toFormat('dd/LL') +\n    ' y el ' + hasta.toFormat('dd/LL') + ':\\n' + lineas.join('\\n')\n  : cabecera + '\\nNo hay ning\u00fan evento apuntado entre el ' +\n    desde.toFormat('dd/LL') + ' y el ' + hasta.toFormat('dd/LL') + '.';\n\nreturn [{ json: { response: respuesta } }];\n",
+        "mode": "runOnceForAllItems"
       },
       "name": "Montar la agenda",
       "type": "n8n-nodes-base.code",
@@ -42,29 +49,22 @@
       ]
     },
     {
-      "parameters": {
-        "operation": "text",
-        "binaryPropertyName": "data",
-        "destinationKey": "contenido",
-        "options": {
-          "destinationKey": "contenido"
-        }
-      },
-      "name": "Extraer el texto",
-      "type": "n8n-nodes-base.extractFromFile",
+      "parameters": {},
+      "name": "Pregunta del agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
       "position": [
-        40,
+        -400,
         300
       ]
     }
   ],
   "connections": {
-    "Pregunta del agente": {
+    "Extraer el texto": {
       "main": [
         [
           {
-            "node": "Leer el vault",
+            "node": "Montar la agenda",
             "type": "main",
             "index": 0
           }
@@ -82,11 +82,11 @@
         ]
       ]
     },
-    "Extraer el texto": {
+    "Pregunta del agente": {
       "main": [
         [
           {
-            "node": "Montar la agenda",
+            "node": "Leer el vault",
             "type": "main",
             "index": 0
           }
@@ -96,6 +96,7 @@
   },
   "settings": {
     "executionOrder": "v1",
+    "binaryMode": "separate",
     "timezone": "Europe/Madrid"
   },
   "pinData": {}

@@ -2,20 +2,10 @@
   "name": "03b - Reindexar",
   "nodes": [
     {
-      "parameters": {},
-      "name": "Reindexar a mano",
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [
-        -400,
-        300
-      ]
-    },
-    {
       "parameters": {
         "method": "DELETE",
-        "url": "http://qdrant:6333/collections/notas",
-        "options": {}
+        "options": {},
+        "url": "http://qdrant:6333/collections/notas"
       },
       "name": "Borrar la coleccion",
       "type": "n8n-nodes-base.httpRequest",
@@ -28,71 +18,8 @@
     },
     {
       "parameters": {
-        "operation": "read",
-        "fileSelector": "/vault/*.md",
-        "options": {
-          "dataPropertyName": "data"
-        }
-      },
-      "name": "Leer el vault",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
-      "position": [
-        40,
-        300
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "function leerVault() {\n  // El texto lo resuelve el nodo \"Extraer el texto\", pero ese nodo se queda\n  // SOLO con la clave que le pides y tira el resto del json, el nombre del\n  // fichero incluido. Hay que ir a buscarlo al nodo de lectura, que saca los\n  // items en el mismo orden, y emparejarlos por posicion.\n  const leidos = $('Leer el vault').all();\n  const ficheros = [];\n  $input.all().forEach((item, i) => {\n    const j = item.json ?? {};\n    if (typeof j.contenido !== 'string' || !j.contenido) return;\n    const src = leidos[i] ?? {};\n    const nombre = src.json?.fileName ?? src.binary?.data?.fileName;\n    // Sin nombre no se puede ni marcar el fichero ni citarlo: mejor saltarlo\n    // que escribir en un sitio inventado.\n    if (!nombre) return;\n    ficheros.push({ nombre, texto: j.contenido });\n  });\n  return ficheros;\n}\n\nfunction frontmatter(texto) {\n  // Un parser de YAML de tres lineas. Solo hay que leer lo que escribe\n  // \"Componer nota\", que son pares clave: valor planos.\n  const m = texto.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);\n  if (!m) return {};\n  const campos = {};\n  for (const linea of m[1].split(/\\r?\\n/)) {\n    const i = linea.indexOf(':');\n    if (i === -1) continue;\n    const clave = linea.slice(0, i).trim();\n    let valor = linea.slice(i + 1).trim();\n    if (valor.startsWith('\"') && valor.endsWith('\"')) {\n      valor = valor.slice(1, -1).replace(/\\\\\"/g, '\"');\n    }\n    campos[clave] = valor;\n  }\n  return campos;\n}\n\n// Modo: Run Once for All Items.\n// Saca un item por nota del vault, con la misma forma que \"Indexar la nota\" de\n// 02b. El cuerpo se corta antes de la transcripcion cruda: lo que se indexa es\n// la version limpia, igual que cuando la nota entro por primera vez.\n\nfunction cuerpo(texto) {\n  const sinFrontmatter = texto.replace(/^---\\r?\\n[\\s\\S]*?\\r?\\n---\\r?\\n?/, '');\n  const corte = sinFrontmatter.search(/<!--\\s*transcripci/i);\n  const util = corte === -1 ? sinFrontmatter : sinFrontmatter.slice(0, corte);\n  // El titulo ya va aparte en el texto indexable, asi que se quita el \"# \".\n  return util.replace(/^#\\s+.*\\r?\\n?/, '').trim();\n}\n\nconst salida = [];\n\nfor (const f of leerVault()) {\n  const fm = frontmatter(f.texto);\n  // Una nota cancelada sigue en el vault, pero no cuenta para nada: ni agenda,\n  // ni avisos, ni busqueda. Ahi esta por si te arrepientes, y nada mas.\n  if (String(fm.cancelado).trim() === 'true') continue;\n  const titulo = fm.titulo || f.nombre.replace(/\\.md$/, '');\n  const limpio = cuerpo(f.texto);\n  if (!limpio) continue;                     // nota vacia, nada que indexar\n\n  salida.push({\n    json: {\n      fichero: f.nombre,\n      titulo,\n      tipo: fm.tipo || 'nota',\n      cuando: fm.cuando || '',\n      tags: (fm.tags || '').replace(/^\\[|\\]$/g, '').trim(),\n      creado: fm.creado || '',\n      texto: titulo + '\\n\\n' + limpio,\n    },\n  });\n}\n\nreturn salida;\n"
-      },
-      "name": "Trocear el vault",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        480,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "mode": "insert",
-        "qdrantCollection": {
-          "__rl": true,
-          "value": "notas",
-          "mode": "id"
-        },
-        "options": {}
-      },
-      "name": "Guardar en Qdrant",
-      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
-      "typeVersion": 1.1,
-      "position": [
-        700,
-        300
-      ],
-      "retryOnFail": true,
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "model": "embeddinggemma:latest",
-        "options": {}
-      },
-      "name": "Embeddings del reindexado",
-      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
-      "typeVersion": 1,
-      "position": [
-        620,
-        520
-      ]
-    },
-    {
-      "parameters": {
-        "jsonMode": "expressionData",
         "jsonData": "={{ $json.texto }}",
+        "jsonMode": "expressionData",
         "options": {
           "metadata": {
             "metadataValues": [
@@ -134,9 +61,22 @@
     },
     {
       "parameters": {
-        "operation": "text",
+        "model": "embeddinggemma:latest",
+        "options": {}
+      },
+      "name": "Embeddings del reindexado",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
+      "typeVersion": 1,
+      "position": [
+        620,
+        520
+      ]
+    },
+    {
+      "parameters": {
         "binaryPropertyName": "data",
         "destinationKey": "contenido",
+        "operation": "text",
         "options": {
           "destinationKey": "contenido"
         }
@@ -148,25 +88,107 @@
         260,
         300
       ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "options": {},
+        "qdrantCollection": {
+          "__rl": true,
+          "mode": "id",
+          "value": "notas"
+        }
+      },
+      "name": "Guardar en Qdrant",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        300
+      ],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fileSelector": "/vault/*.md",
+        "operation": "read",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "name": "Leer el vault",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        40,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "name": "Reindexar a mano",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function leerVault() {\n  // El texto lo resuelve el nodo \"Extraer el texto\", pero ese nodo se queda\n  // SOLO con la clave que le pides y tira el resto del json, el nombre del\n  // fichero incluido. Hay que ir a buscarlo al nodo de lectura, que saca los\n  // items en el mismo orden, y emparejarlos por posicion.\n  const leidos = $('Leer el vault').all();\n  const ficheros = [];\n  $input.all().forEach((item, i) => {\n    const j = item.json ?? {};\n    if (typeof j.contenido !== 'string' || !j.contenido) return;\n    const src = leidos[i] ?? {};\n    const nombre = src.json?.fileName ?? src.binary?.data?.fileName;\n    // Sin nombre no se puede ni marcar el fichero ni citarlo: mejor saltarlo\n    // que escribir en un sitio inventado.\n    if (!nombre) return;\n    ficheros.push({ nombre, texto: j.contenido });\n  });\n  return ficheros;\n}\n\nfunction frontmatter(texto) {\n  // Un parser de YAML de tres lineas. Solo hay que leer lo que escribe\n  // \"Componer nota\", que son pares clave: valor planos.\n  const m = texto.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);\n  if (!m) return {};\n  const campos = {};\n  for (const linea of m[1].split(/\\r?\\n/)) {\n    const i = linea.indexOf(':');\n    if (i === -1) continue;\n    const clave = linea.slice(0, i).trim();\n    let valor = linea.slice(i + 1).trim();\n    if (valor.startsWith('\"') && valor.endsWith('\"')) {\n      valor = valor.slice(1, -1).replace(/\\\\\"/g, '\"');\n    }\n    campos[clave] = valor;\n  }\n  return campos;\n}\n\n// Modo: Run Once for All Items.\n// Saca un item por nota del vault, con la misma forma que \"Indexar la nota\" de\n// 02b. El cuerpo se corta antes de la transcripcion cruda: lo que se indexa es\n// la version limpia, igual que cuando la nota entro por primera vez.\n\nfunction cuerpo(texto) {\n  const sinFrontmatter = texto.replace(/^---\\r?\\n[\\s\\S]*?\\r?\\n---\\r?\\n?/, '');\n  const corte = sinFrontmatter.search(/<!--\\s*transcripci/i);\n  const util = corte === -1 ? sinFrontmatter : sinFrontmatter.slice(0, corte);\n  // El titulo ya va aparte en el texto indexable, asi que se quita el \"# \".\n  return util.replace(/^#\\s+.*\\r?\\n?/, '').trim();\n}\n\nconst salida = [];\n\nfor (const f of leerVault()) {\n  const fm = frontmatter(f.texto);\n  // Una nota cancelada sigue en el vault, pero no cuenta para nada: ni agenda,\n  // ni avisos, ni busqueda. Ahi esta por si te arrepientes, y nada mas.\n  if (String(fm.cancelado).trim() === 'true') continue;\n  const titulo = fm.titulo || f.nombre.replace(/\\.md$/, '');\n  const limpio = cuerpo(f.texto);\n  if (!limpio) continue;                     // nota vacia, nada que indexar\n\n  salida.push({\n    json: {\n      fichero: f.nombre,\n      titulo,\n      tipo: fm.tipo || 'nota',\n      cuando: fm.cuando || '',\n      tags: (fm.tags || '').replace(/^\\[|\\]$/g, '').trim(),\n      creado: fm.creado || '',\n      texto: titulo + '\\n\\n' + limpio,\n    },\n  });\n}\n\nreturn salida;\n",
+        "mode": "runOnceForAllItems"
+      },
+      "name": "Trocear el vault",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
     }
   ],
   "connections": {
-    "Reindexar a mano": {
+    "Borrar la coleccion": {
       "main": [
         [
           {
-            "node": "Borrar la coleccion",
+            "node": "Leer el vault",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Borrar la coleccion": {
+    "Cargador del reindexado": {
+      "ai_document": [
+        [
+          {
+            "node": "Guardar en Qdrant",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings del reindexado": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Guardar en Qdrant",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer el texto": {
       "main": [
         [
           {
-            "node": "Leer el vault",
+            "node": "Trocear el vault",
             "type": "main",
             "index": 0
           }
@@ -184,6 +206,17 @@
         ]
       ]
     },
+    "Reindexar a mano": {
+      "main": [
+        [
+          {
+            "node": "Borrar la coleccion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Trocear el vault": {
       "main": [
         [
@@ -194,43 +227,11 @@
           }
         ]
       ]
-    },
-    "Embeddings del reindexado": {
-      "ai_embedding": [
-        [
-          {
-            "node": "Guardar en Qdrant",
-            "type": "ai_embedding",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Cargador del reindexado": {
-      "ai_document": [
-        [
-          {
-            "node": "Guardar en Qdrant",
-            "type": "ai_document",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Extraer el texto": {
-      "main": [
-        [
-          {
-            "node": "Trocear el vault",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
+    "binaryMode": "separate",
     "timezone": "Europe/Madrid"
   },
   "pinData": {}

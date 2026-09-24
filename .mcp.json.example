@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "n8n-mcp": {
+      "type": "http",
+      "url": "http://<ip-de-la-vm>:5678/mcp-server/http",
+      "headers": {
+        "authorization": "Bearer <token de n8n: Settings > MCP Access>"
+      }
+    }
+  }
+}
