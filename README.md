@@ -4,8 +4,8 @@ Un bot de Telegram que hace de secretario personal. Le mandas una nota de voz, l
 transcribe, la ordena y la guarda. Le preguntas por algo que dijiste hace tres meses
 y lo encuentra. Le cuentas que el martes tienes dentista y te avisa el martes.
 
-Todo corre en casa. Lo único que sale a internet es la API de Telegram y el modelo
-que razona.
+Todo corre en casa. Lo único que sale a internet es la API de Telegram, el modelo
+que razona y tu Google Calendar, que es donde viven las citas.
 
 ## Arranque rápido
 
@@ -53,6 +53,25 @@ Y una quinta, para que el "escribiendo…" no se apague mientras el agente piens
 n8n API*. Va en el nodo *Mirar la pregunta* de `02b`. Sin ella, `02b` no se deja
 publicar.
 
+Y una sexta, para el calendario: una **Google Calendar OAuth2 API** llamada `Google
+Calendar account`. Va en todos los nodos *Leer el calendario*, *Crear en Google* y
+*Borrar de Google*. Hay que crearla con un poco de cuidado, y una sola vez:
+
+1. En Google Cloud, un proyecto con la **Google Calendar API** activada.
+2. En *Google Auth Platform*: público **Externo**, y en *Desarrollo de la marca* una
+   página principal y una política de privacidad (vale la URL del repo). Sin eso no
+   deja pulsar **Publicar app**, y hay que pulsarlo: en modo *Prueba* el token caduca
+   a los 7 días y el calendario deja de funcionar sin avisar.
+3. Un cliente OAuth de tipo *Aplicación web* con la redirección
+   `http://localhost:5678/rest/oauth2-credential/callback`.
+4. La credencial se conecta desde `http://localhost:5678`, no desde la IP: Google no
+   acepta una IP privada como vuelta. Desde tu PC, `ssh -L 5678:localhost:5678
+   <servidor>` y abres n8n por localhost. Al conectar sale "Google no ha verificado
+   esta aplicación": *Configuración avanzada → Ir a Alfred*. La app es tuya.
+
+Se puede revocar en cualquier momento desde
+[myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
 Los system prompts viven en `prompts/`, montado en el contenedor como `/prompts`
 en solo lectura. Los workflows los leen en ejecución, así que para cambiar un
 prompt basta con editar el fichero: no hay que tocar ni reimportar el JSON.
@@ -84,9 +103,9 @@ Telegram (long polling, llega al instante)
         │
         ├── borrar   → busca en el vault → botones → marca cancelado
         │
-        ├── nota  ─┐
-        ├── tarea ─┼→ .md en vault/  +  embedding en qdrant
-        └── evento ┘   (el evento pregunta con botones antes de guardar)
+        ├── nota  ─┬→ .md en vault/  +  embedding en qdrant
+        ├── tarea ─┘
+        └── con fecha → botones → Google Calendar
         │
         ▼
    confirmación por Telegram
@@ -100,7 +119,7 @@ mismo sitio, solo que el prompt sabe que ese texto no trae ruido de transcripci�
 y no hay que guardar el original aparte.
 
 Cuando el mensaje es una pregunta en vez de un dictado, entra un **AI Agent** con sus
-herramientas: buscar en Qdrant, leer la agenda del vault y, si lo tienes, buscar y
+herramientas: buscar en Qdrant, leer la agenda de Google Calendar y, si lo tienes, buscar y
 leer en [Memos](#memos). De distinguir pregunta de
 dictado se encarga el mismo prompt que ya clasificaba, que devuelve `tipo:
 "pregunta"`. Un router aparte habría sido más limpio, pero son dos peticiones al
@@ -130,8 +149,25 @@ Dentista el miércoles a las seis, en la clínica de la calle Mayor.
 > pues eh el miércoles a las seis tengo dentista en la de calle mayor
 ```
 
-Los eventos no necesitan calendario aparte: son notas con `cuando` relleno. El
-workflow de avisos los busca por ahí y marca `avisado: true` al notificar.
+Eso vale para notas y tareas. **Lo que tiene fecha no va al vault: va a tu Google
+Calendar**, al principal. Ahí lo puedes ver, mover o borrar desde el móvil o la web,
+y la agenda, los avisos y el resumen de las 8:00 leen de ahí, así que lo que cambies
+a mano en Google lo ve Alfred y lo que apuntes a mano también.
+
+Un evento dictado se crea con:
+
+- el título como título, empieza en `cuando` y dura una hora;
+- el texto limpio en la descripción y, si fue por voz, la transcripción cruda debajo;
+- **sin recordatorios de Google**, porque ya avisa Telegram;
+- `alfred: true` en sus propiedades privadas, para distinguirlo de los tuyos.
+
+Una tarea con día (*"recuérdame mañana comprar pan"*) también es algo con fecha, así
+que va al calendario y pasa por los mismos botones que un evento.
+
+Antes los eventos eran notas con `cuando` relleno. Los que quedaban pendientes se
+pasaron a Google con `05 - Migrar eventos a Google` y en el vault llevan
+`migrado: gcal` y el `gcal_id` del evento. Se quedan ahí como recuerdo, pero ya no
+avisan, no salen en la agenda y no se proponen al cancelar.
 
 La transcripción cruda se guarda junto a la versión limpia siempre que la haya. El
 día que el modelo interprete mal algo importante, querrás ver qué dijiste de verdad.
@@ -204,11 +240,16 @@ el "escribiendo…" de siempre llega.
 ## Cancelar y olvidar
 
 *"Cancela el dentista del jueves"*, *"olvida lo del pan"*. El clasificador lo marca
-como `borrar`, el bot busca en el vault qué puede ser y te enseña **hasta tres
-candidatos** con su fecha para que elijas con un botón. Igual que al guardar un
-evento, pero al revés.
+como `borrar`, el bot busca qué puede ser en el vault y en tu Google Calendar (de un
+mes atrás a un año adelante) y te enseña **hasta tres candidatos** con su fecha para
+que elijas con un botón. Igual que al guardar un evento, pero al revés.
 
-Nada se borra del disco. La nota elegida se queda donde está con dos líneas más:
+Si eliges un evento de Google, se borra de Google. Va a la papelera del calendario y
+ahí se queda 30 días, por si te arrepientes. Si Google no responde, la búsqueda
+sigue solo con el vault y te lo dice debajo de los candidatos.
+
+Si eliges una nota del vault, nada se borra del disco. La nota se queda donde está
+con dos líneas más:
 
 ```yaml
 cancelado: true
@@ -243,28 +284,30 @@ citas con el dentista, la que cancelas casi siempre es la que viene.
 Dos workflows, los dos con Schedule Trigger, los dos hay que **activarlos a mano**
 después de importarlos o no se disparan nunca.
 
-**04a - Avisos**, cada 15 minutos. Busca notas con `cuando` relleno y `avisado: false`
-en una ventana que va de 2 horas antes de ahora a 1 hora después, te manda el aviso y
-marca `avisado: true` en el `.md`.
+**04a - Avisos**, cada 15 minutos. Lee de Google Calendar los eventos que empiezan en
+una ventana que va de 2 horas antes de ahora a 1 hora después y te manda el aviso. Lo
+avisado se apunta en el `staticData` del workflow, con el id del evento y su hora: así
+no se toca nada de tu calendario y, si mueves un evento, te vuelve a avisar a la hora
+nueva. Los eventos de todo el día no avisan: salen en el resumen de las 8:00.
+
+Si Google no responde, te lo dice por Telegram, como mucho una vez cada 6 horas. Un
+calendario que no se puede leer es un bot que no avisa, y eso no se nota hasta que te
+pierdes algo.
 
 La ventana hacia atrás no es un descuido. Si el bot ha estado parado media hora, los
 eventos que cayeron en ese hueco te llegan tarde en vez de no llegar; te lo dice con
 un *"se te ha pasado hace 40 min"* en vez de fingir que es un aviso normal. Las dos
 constantes están arriba del nodo *Buscar eventos que tocan* y se tocan ahí.
 
-Avisar y marcar van por **ramas paralelas**, no en cadena. Si la escritura del `.md`
-falla, te vuelve a avisar dentro de 15 minutos. Es el fallo que quieres: el contrario,
-marcar y no avisar, te deja sin enterarte y sin rastro.
+Se apunta **después** de que Telegram acepte el mensaje, no antes. Si el envío
+falla, no se apunta y te vuelve a avisar dentro de 15 minutos. Es el fallo que
+quieres: el contrario, marcar y no avisar, te deja sin enterarte y sin rastro.
 
-Ojo a que el filtro va por `cuando`, no por `tipo`. Una tarea con fecha —*"recuérdame
-mañana comprar pan"*— también avisa, y eso es justo lo que quieres de esa frase. Es la
-misma regla que usa la agenda del agente, y la que ya prometía este README: los
-eventos son notas con `cuando` relleno.
-
-**04b - Resumen diario**, a las 8:00. Los eventos de hoy y, debajo, los de los
-próximos siete días. Solo llega si hoy hay algo: un "hoy no tienes nada" cada mañana
-acaba siendo ruido que dejas de leer. El precio es que un día sin mensaje no te dice
-si estás libre o si el workflow está parado; para eso, pregúntale.
+**04b - Resumen diario**, a las 8:00, también desde Google. Los eventos de hoy y,
+debajo, los de los próximos siete días. Solo llega si hoy hay algo: un "hoy no tienes
+nada" cada mañana acaba siendo ruido que dejas de leer. El precio es que un día sin
+mensaje no te dice si estás libre o si el workflow está parado; para eso, pregúntale.
+Lo que sí rompe el silencio es no poder leer el calendario: eso te lo dice.
 
 No lleva tareas sin fecha. Podría, pero no hay forma de marcar una tarea como hecha,
 así que la lista solo crecería hasta volverse ruido. Eso pide un botón de "hecho", y
@@ -330,9 +373,10 @@ matiz para clientes del EEE que podría no aplicarte esa cláusula, pero las fue
 contradicen, así que compruébalo en los términos antes de volcar ahí tu vida personal.
 
 La fuga no es solo la nota que dictas: cuando el agente busca en Qdrant y le pasa a
-Gemini las notas recuperadas, esas también salen. Si te incomoda, cambia el nodo
-Google Gemini Chat Model por Ollama Chat Model y no se toca nada más del flujo. El
-resto del sistema ya es local.
+Gemini las notas recuperadas, esas también salen. Y cuando mira la agenda, salen los
+títulos de tu calendario, también los que apuntaste a mano y los de las invitaciones.
+Si te incomoda, cambia el nodo Google Gemini Chat Model por Ollama Chat Model y no se
+toca nada más del flujo. El resto del sistema ya es local, salvo el propio calendario.
 
 **Todo en un compose.** Levantas o tiras el stack entero de una vez, y el backup es
 copiar `vault/` y los volúmenes.
@@ -357,8 +401,9 @@ No intentes montarlo entero de golpe. Cada fase funciona sola y ya es útil.
 5. **Cancelar y olvidar.** ✅ Anular una cita o tirar una nota desde el chat, con
    confirmación y sin perder nada. Hasta aquí, el bot solo sabía añadir.
 
-Google Calendar no está en ninguna fase todavía. Es una decisión aplazada, no un
-olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
+6. **El calendario.** ✅ Lo que tiene fecha pasa a Google Calendar: lo ves y lo
+   cambias desde cualquier sitio, y Alfred lee de ahí para la agenda, los avisos y el
+   resumen. El vault se queda con notas y tareas.
 
 ## Trampas conocidas
 
@@ -452,19 +497,33 @@ olvido: los eventos son notas con `cuando` relleno y de momento eso basta.
 - Los dos workflows de la fase 4 llevan **Schedule Trigger**, así que no hacen nada
   hasta que los activas con el toggle. Importarlos no basta, y no avisan de que no
   están avisando.
-- La marca `avisado: true` se escribe sobre el texto que se leyó en esa misma pasada,
-  no releyendo el fichero. Si editas esa nota a mano en el mismo instante, tu edición
-  se pierde. La ventana es de milisegundos y el vault es de un solo usuario, pero está
-  ahí.
-- Las notas de antes de la fase 4 pueden no tener el campo `avisado`. Al marcarlas se
-  les añade al frontmatter; sin eso, no habría dónde dejar la marca y te avisarían
-  cada quince minutos para siempre.
 - El `chat_id` de los avisos sale de `TELEGRAM_ALLOWED_USER_ID`, porque en un chat
   privado el chat id y tu user id son el mismo número. Si algún día hablas con el bot
   desde un grupo, los avisos seguirán llegando a tu chat privado.
-- Marcar `avisado` cambia el `.md` y Qdrant no se entera, pero da igual: lo que se
-  indexa es el título y el cuerpo, y el frontmatter no entra. No hace falta reindexar
-  después de un aviso.
+- El campo `avisado` de las notas antiguas ya no lo mira nadie. Lo avisado vive en el
+  `staticData` de `04a`, que solo se guarda en ejecuciones de producción: si lanzas
+  `04a` a mano para probarlo, te avisará cada vez de lo mismo.
+
+- El calendario se pide por la API de Google con nodos **HTTP Request**, no con el
+  nodo de Google Calendar. El nodo exige el id del calendario, que es tu correo, y no
+  acepta el alias `primary`; con HTTP se usa `primary` y el correo no acaba en un
+  repo público. La credencial es la misma (*predefined credential type*).
+- Al crear un nodo HTTP por MCP, n8n avisa de que se salta la asignación automática
+  de credenciales. Por si acaso, se la pone después un `setNodeCredential`. Si un nodo
+  se queda sin credencial, como va con `onError` en continuar, lo único que verías es
+  "no he podido leer el calendario".
+- `timeMin` en la API de Google filtra por el **fin** del evento, no por el inicio.
+  Los nodos Code vuelven a filtrar por inicio; no te fíes solo de la petición.
+- Google devuelve los eventos de todo el día con `start.date` y sin hora. Los nodos
+  Code los marcan como `todoElDia`: en la agenda salen como "todo el día", el resumen
+  los pone arriba y los avisos los saltan.
+- Los eventos de Google tienen dueño fuera de Alfred: los que creas a mano conservan
+  sus recordatorios, así que de esos te avisan Google y Telegram. Los que crea Alfred
+  van sin recordatorios a propósito.
+- Una invitación que te mandan entra en tu calendario con el título que quiera quien
+  la manda, y ese título llega a Gemini cuando preguntas por la agenda. La agenda solo
+  pasa título y hora, nunca la descripción, y el agente solo lee: no tiene ninguna
+  herramienta que cree o borre en el calendario.
 
 - Cambiar de modelo de embeddings **obliga a reindexar**, aunque el número de
   dimensiones coincida: los vectores de dos modelos distintos no son comparables y
@@ -516,10 +575,11 @@ secretario/
 │  ├─ 01-libreta.json       # fase 1, polling simple
 │  ├─ 02a-escucha.json      # el bucle de long polling
 │  ├─ 02b-secretario.json   # transcribir, clasificar, guardar, contestar
-│  ├─ 03a-agenda.json       # herramienta del agente: los eventos del vault
+│  ├─ 03a-agenda.json       # herramienta del agente: los eventos de Google Calendar
 │  ├─ 03b-reindexar.json    # rehace la colección de qdrant desde el vault
 │  ├─ 04a-avisos.json       # cada 15 min, avisa de lo que se acerca
-│  └─ 04b-resumen.json      # el parte de las 8:00
+│  ├─ 04b-resumen.json      # el parte de las 8:00
+│  └─ 05-migrar-eventos-a-google.json  # una vez: los eventos del vault a Google
 ├─ prompts/       # system prompts en ficheros aparte, para versionarlos
 │  ├─ 01-limpiar-transcripcion.md
 │  ├─ 02-clasificar.md

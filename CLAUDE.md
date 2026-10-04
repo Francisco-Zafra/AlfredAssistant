@@ -16,6 +16,9 @@ explican el *por qué*, no el qué: sigue el tono de los que ya hay.
   los workflows lo leen en cada ejecución. Editar un prompt no requiere tocar el JSON.
 - `vault/` son las notas reales del usuario. **No leer, no commitear, no citar** salvo
   que lo pida.
+- Lo que tiene fecha **no está en el vault**: vive en el Google Calendar principal del
+  usuario. 02b crea y borra ahí; 03a, 04a y 04b leen de ahí. Se llama a la API con
+  HTTP Request y el alias `primary`, nunca con el correo: el repo es público.
 - `docker-compose.yml` levanta n8n, whisper, qdrant y ollama. Solo n8n publica puerto.
 
 ## Control de versiones de los workflows
@@ -43,8 +46,10 @@ git diff workflows/
 `.mcp.json` apunta al MCP oficial de la instancia y lleva el token en claro: está en
 `.gitignore`, la plantilla es `.mcp.json.example`. Ojo:
 
-- Solo ve los workflows con el acceso MCP activado (ahora mismo 02a y 02b). El script
-  de export usa la API pública y los ve todos.
+- Solo ve los workflows con el acceso MCP activado (ahora mismo todos). El script de
+  export usa la API pública y los ve todos.
+- Al crear un nodo HTTP por MCP, n8n avisa de que no le asigna credenciales solo:
+  añade después un `setNodeCredential` para ir sobre seguro.
 - **Cambiar un workflow por MCP cambia el bot real, en producción.** No actives,
   publiques, ejecutes ni borres workflows sin que el usuario lo pida. `02a` está en
   bucle de long polling permanente: no lo ejecutes a mano.
