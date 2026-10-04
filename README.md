@@ -262,8 +262,9 @@ misma regla que usa la agenda del agente, y la que ya prometía este README: los
 eventos son notas con `cuando` relleno.
 
 **04b - Resumen diario**, a las 8:00. Los eventos de hoy y, debajo, los de los
-próximos siete días. Manda el mensaje aunque no haya nada: un resumen que calla no se
-distingue de un bot roto.
+próximos siete días. Solo llega si hoy hay algo: un "hoy no tienes nada" cada mañana
+acaba siendo ruido que dejas de leer. El precio es que un día sin mensaje no te dice
+si estás libre o si el workflow está parado; para eso, pregúntale.
 
 No lleva tareas sin fecha. Podría, pero no hay forma de marcar una tarea como hecha,
 así que la lista solo crecería hasta volverse ruido. Eso pide un botón de "hecho", y
