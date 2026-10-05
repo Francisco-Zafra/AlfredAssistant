@@ -80,13 +80,28 @@ las siete"), y entonces parte siempre de la hora actual que se te da.
 
 Si la hora no se dice:
 
-- Referencias a un día suelto ("mañana", "el martes") → las 09:00.
+- Referencias a un día suelto ("mañana", "el martes") → las 09:00. Vale para
+  recados y citas de un rato ("el martes llamar al banco", "mañana dentista"):
+  a las 09:00 salta el aviso, y eso es lo que quieres de esa frase.
 - "por la mañana" → 09:00. "a mediodía" → 14:00. "por la tarde" → 17:00.
   "por la noche" → 21:00.
 
 Si la nota da hora sin decir mañana o tarde, elige la interpretación razonable
 para una agenda personal: "a las seis" es casi siempre las 18:00, "a las ocho y
 media" con un desayuno de por medio son las 08:30.
+
+### Cuánto dura
+
+- **`hasta`**: cuándo acaba, en el mismo formato que `cuando`, pero solo si la
+  nota lo dice ("de 10 a 14", "hasta las seis", "del lunes al miércoles"). Si no
+  lo dice, `null`: no te inventes duraciones.
+- **`todo_el_dia`**: `true` cuando lo apuntado ocupa días enteros y no un rato.
+  Un viaje, unas vacaciones, un congreso, un puente, "resérvame el finde",
+  "el jueves no estoy". Entonces `cuando` es el primer día a las 00:00 y
+  `hasta` el último día a las 00:00, **los dos incluidos**: "este finde" son el
+  sábado y el domingo, y "este fin de semana" está en la tabla de anclas. Si es
+  un solo día, `hasta` es ese mismo día.
+- En cualquier otro caso, `todo_el_dia` es `false`.
 
 ### Varias citas en un mensaje
 
@@ -95,8 +110,8 @@ las sesiones de un curso, "el lunes dentista y el jueves la ITV". Eso son varios
 eventos, no uno. Entonces:
 
 - `tipo` es `evento`.
-- En `eventos` va **una entrada por cita**, cada una con su `titulo`, su `cuando`
-  y su `lugar` (o `null` si no se dice).
+- En `eventos` va **una entrada por cita**, cada una con su `titulo`, su
+  `cuando`, su `hasta`, su `todo_el_dia` y su `lugar` (o `null` si no se dice).
 - El `titulo` de cada una tiene que distinguirla de las demás y decir de qué va:
   si son partidos de pádel, "Pádel contra Los Linces", no "Partido 3" ni el
   título del conjunto.
@@ -127,11 +142,11 @@ voz" ni "Recordatorio": di de qué va.
 Responde ÚNICAMENTE con un objeto JSON válido, sin texto antes ni después y sin
 vallas de código:
 
-{"tipo": "nota|tarea|evento|pregunta|borrar", "titulo": "...", "limpio": "...", "cuando": null, "lugar": null, "eventos": null, "tags": [], "busqueda": null}
+{"tipo": "nota|tarea|evento|pregunta|borrar", "titulo": "...", "limpio": "...", "cuando": null, "hasta": null, "todo_el_dia": false, "lugar": null, "eventos": null, "tags": [], "busqueda": null}
 
 Con varias citas, `eventos` es una lista:
 
-"eventos": [{"titulo": "...", "cuando": "YYYY-MM-DDTHH:MM:SS", "lugar": "..."}, ...]
+"eventos": [{"titulo": "...", "cuando": "YYYY-MM-DDTHH:MM:SS", "hasta": null, "todo_el_dia": false, "lugar": "..."}, ...]
 
 Los saltos de línea dentro de `limpio` van escapados como \n.
 

@@ -156,7 +156,12 @@ a mano en Google lo ve Alfred y lo que apuntes a mano también.
 
 Un evento dictado se crea con:
 
-- el título como título, empieza en `cuando` y dura una hora;
+- el título como título y empieza en `cuando`. Si dijiste hasta cuándo dura ("de
+  10 a 14"), acaba ahí; si ocupa días enteros ("resérvame el finde", "del lunes al
+  miércoles estoy fuera"), es un evento de todo el día de uno o varios días; y si
+  no dijiste nada, dura una hora, que es lo que pide Google, marcada como supuesta
+  (sin `finConocido` en sus propiedades privadas) para que la agenda no la cuente
+  como un dato;
 - el texto limpio en la descripción y, si fue por voz, la transcripción cruda debajo;
 - **sin recordatorios de Google**, porque ya avisa Telegram;
 - `alfred: true` en sus propiedades privadas, para distinguirlo de los tuyos.
@@ -520,9 +525,14 @@ No intentes montarlo entero de golpe. Cada fase funciona sola y ya es útil.
   "no he podido leer el calendario".
 - `timeMin` en la API de Google filtra por el **fin** del evento, no por el inicio.
   Los nodos Code vuelven a filtrar por inicio; no te fíes solo de la petición.
-- Google devuelve los eventos de todo el día con `start.date` y sin hora. Los nodos
-  Code los marcan como `todoElDia`: en la agenda salen como "todo el día", el resumen
-  los pone arriba y los avisos los saltan.
+- Google devuelve los eventos de todo el día con `start.date` y sin hora, y su
+  `end.date` es **exclusivo**: un evento del sábado al domingo acaba el lunes. Al
+  crear uno hay que sumar un día al último; al leerlo, restarlo. Los nodos Code los
+  marcan como `todoElDia`: en la agenda salen como "del sábado al domingo, todo el
+  día", el resumen los enseña cada día que siguen en marcha y los avisos los saltan.
+- "Este finde" sale de la tabla de anclas, no del modelo: si ya es sábado o domingo
+  es el que está en curso, y si no el siguiente. Sin esa línea, un domingo el
+  modelo apuntaba el finde de la semana que viene.
 - Los eventos de Google tienen dueño fuera de Alfred: los que creas a mano conservan
   sus recordatorios, así que de esos te avisan Google y Telegram. Los que crea Alfred
   van sin recordatorios a propósito.

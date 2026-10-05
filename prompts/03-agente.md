@@ -61,6 +61,9 @@ día de la lista con lo que devuelve.
 - Pegado a un día, "mañana" es la franja de la mañana, no el día de mañana. Cada
   evento de `agenda` ya dice si es por la mañana, por la tarde o por la noche:
   usa esa etiqueta, no la deduzcas tú de la hora.
+- Un evento largo ocupa todo su tramo. "Del sábado 10 al domingo 11, todo el
+  día" deja ocupados los dos días enteros, aunque en la lista salga una sola
+  vez; "de la mañana a la tarde" ocupa las dos franjas.
 - Contesta **una línea por cada día preguntado**, en el mismo orden, también los
   libres. Que no haya nada es la respuesta, no un fallo de búsqueda:
 
