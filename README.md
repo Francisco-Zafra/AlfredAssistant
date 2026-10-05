@@ -290,6 +290,33 @@ paso, lee el vault directamente, así que funciona aunque el índice esté desfa
 A igualdad de palabras gana la nota con la fecha más cercana a hoy: si tienes dos
 citas con el dentista, la que cancelas casi siempre es la que viene.
 
+## Cambiar un evento
+
+*"El lasertag del 24 es a las 10"*, *"el dentista pasa al jueves"*, *"lo de Elena al
+final es solo el sábado"*. El clasificador lo marca como `modificar` y devuelve dos
+cosas: con qué palabras buscar el evento y **solo lo que cambia** (fecha, hora,
+final, todo el día, nombre o sitio). Lo demás se queda como estaba: si el dentista
+pasa al jueves, sigue a la misma hora y durando lo mismo.
+
+El bot busca en Google por palabras, igual que al cancelar, calcula cómo quedaría y
+te lo enseña con el antes y el después:
+
+```
+¿Lo cambio así?
+
+Laser tag
+   sábado 24 de octubre: 09:00 → 10:00
+```
+
+El botón confirma exactamente eso, sin volver a pasar por el modelo. Al confirmar se
+manda el evento entero con los cambios (un PUT, no un parche), y conserva su id, sus
+invitados y sus recordatorios. Solo se cambian eventos del calendario, no notas del
+vault.
+
+La frontera con un evento nuevo es fina: *"el lasertag es a las 10"* es un cambio,
+*"el 24 a las 10 tengo lasertag"* es uno nuevo. Si el modelo se equivoca, la pregunta
+sale mal y la rechazas con un botón; el calendario no se toca sin tu sí.
+
 ## Los avisos
 
 Dos workflows, los dos con Schedule Trigger, los dos hay que **activarlos a mano**
@@ -414,7 +441,8 @@ No intentes montarlo entero de golpe. Cada fase funciona sola y ya es útil.
 
 6. **El calendario.** ✅ Lo que tiene fecha pasa a Google Calendar: lo ves y lo
    cambias desde cualquier sitio, y Alfred lee de ahí para la agenda, los avisos y el
-   resumen. El vault se queda con notas y tareas.
+   resumen. El vault se queda con notas y tareas. Desde el chat se puede crear (también
+   listas de citas y eventos de varios días), cambiar y cancelar.
 
 ## Trampas conocidas
 
@@ -530,6 +558,13 @@ No intentes montarlo entero de golpe. Cada fase funciona sola y ya es útil.
   crear uno hay que sumar un día al último; al leerlo, restarlo. Los nodos Code los
   marcan como `todoElDia`: en la agenda salen como "del sábado al domingo, todo el
   día", el resumen los enseña cada día que siguen en marcha y los avisos los saltan.
+- Para cambiar un evento se usa **PUT con el evento entero**, no PATCH. Pasar de
+  todo el día a tener hora obliga a quitar `start.date` y poner `start.dateTime`, y
+  un parche mezcla los dos y Google lo rechaza. El cuerpo se calcula al buscar y se
+  guarda en el pendiente, así que el botón aplica justo lo que viste.
+- Un pendiente de *modificar* ocupa el mismo hueco único que guardar y cancelar: si
+  pides un cambio y sin contestar dictas otro evento, los botones del cambio quedan
+  caducados.
 - "Este finde" sale de la tabla de anclas, no del modelo: si ya es sábado o domingo
   es el que está en curso, y si no el siguiente. Sin esa línea, un domingo el
   modelo apuntaba el finde de la semana que viene.

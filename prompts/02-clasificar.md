@@ -53,6 +53,13 @@ cuentes algo o que quites algo.
   contando algo que pasó. "Cancela el dentista" es una orden. Si no distingues
   una de otra, es `nota`: apuntar de más se arregla borrando.
 
+- **modificar**: te están pidiendo cambiar algo de un evento que ya está
+  apuntado: la hora, el día, cuánto dura, el sitio o el nombre. "El lasertag del
+  24 es a las 10", "el dentista pasa al jueves", "lo de Elena al final es solo
+  el sábado", "la cena es en casa de Ana". La pista es que habla de algo que ya
+  existe ("el lasertag", "lo del dentista") y dice cómo queda ahora. "El 24 a
+  las 10 tengo lasertag" no es un cambio: es un evento nuevo.
+
 - **evento**: hay un momento concreto en el tiempo. Una cita, una reunión, un
   vuelo, un cumpleaños. "El miércoles a las seis tengo dentista."
 - **tarea**: algo que hay que hacer, sin momento fijo. "Tengo que llamar al
@@ -65,7 +72,8 @@ viernes" tiene momento.
 
 ## 3. Fechar
 
-Si es una `pregunta` o un `borrar`, `cuando` es `null` y aquí has terminado.
+Si es una `pregunta`, un `borrar` o un `modificar`, `cuando` es `null` y aquí has
+terminado.
 
 Rellena `cuando` solo si en la nota hay un momento en el tiempo. Si no lo hay,
 `cuando` es `null`. La mayoría de notas no llevan fecha; no fuerces ninguna.
@@ -142,7 +150,7 @@ voz" ni "Recordatorio": di de qué va.
 Responde ÚNICAMENTE con un objeto JSON válido, sin texto antes ni después y sin
 vallas de código:
 
-{"tipo": "nota|tarea|evento|pregunta|borrar", "titulo": "...", "limpio": "...", "cuando": null, "hasta": null, "todo_el_dia": false, "lugar": null, "eventos": null, "tags": [], "busqueda": null}
+{"tipo": "nota|tarea|evento|pregunta|borrar|modificar", "titulo": "...", "limpio": "...", "cuando": null, "hasta": null, "todo_el_dia": false, "lugar": null, "eventos": null, "tags": [], "busqueda": null, "fecha_actual": null, "cambios": null}
 
 Con varias citas, `eventos` es una lista:
 
@@ -150,7 +158,8 @@ Con varias citas, `eventos` es una lista:
 
 Los saltos de línea dentro de `limpio` van escapados como \n.
 
-`busqueda` solo se rellena cuando el tipo es `borrar`. Si no, va `null`.
+`busqueda` solo se rellena cuando el tipo es `borrar` o `modificar`. Si no, va
+`null`.
 
 Si el tipo es `pregunta`, `limpio` es la pregunta con el ruido de transcripción
 quitado y nada más, `titulo` es esa misma pregunta, `cuando` es `null` y `tags`
@@ -161,3 +170,25 @@ la nota**, sin el verbo y sin relleno. Para "oye, cancélame la cita del dentist
 del jueves" la búsqueda es `dentista`. Para "olvida lo de comprar pan",
 `comprar pan`. Se busca por palabras sueltas contra lo que escribiste al
 apuntarlo, así que usa las que estarían en la nota, no sinónimos tuyos.
+
+Si el tipo es `modificar`:
+
+- `busqueda`: las palabras con las que encontrar el evento, igual que al
+  borrar. Para "el lasertag del 24 es a las 10", `lasertag`.
+- `fecha_actual`: el día en que está **ahora** el evento, si lo dice ("el del
+  24" → la fecha de ese 24), en `"YYYY-MM-DD"`. Si no lo dice, `null`.
+- `cambios`: **solo lo que cambia**; lo que no se menciona va `null` y se queda
+  como estaba.
+
+  "cambios": {"fecha": null, "hora": null, "fecha_fin": null, "hora_fin": null, "todo_el_dia": null, "titulo": null, "lugar": null}
+
+  - `fecha`: el nuevo día, `"YYYY-MM-DD"`. `hora`: la nueva hora de inicio,
+    `"HH:MM"`. "Es a las 10" cambia la hora y no la fecha; "pasa al jueves"
+    cambia la fecha y no la hora.
+  - `fecha_fin` y `hora_fin`: el nuevo final, solo si lo dice ("hasta las 12",
+    "hasta el domingo").
+  - `todo_el_dia`: `true` si pasa a ocupar días enteros, `false` si pasa a
+    tener hora. Si no cambia, `null`.
+  - `titulo` y `lugar`: el nuevo nombre o el nuevo sitio, si lo dice.
+
+Usa las anclas para las fechas, como al fechar un evento nuevo.
