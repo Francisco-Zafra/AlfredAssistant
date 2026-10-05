@@ -88,6 +88,28 @@ Si la nota da hora sin decir mañana o tarde, elige la interpretación razonable
 para una agenda personal: "a las seis" es casi siempre las 18:00, "a las ocho y
 media" con un desayuno de por medio son las 08:30.
 
+### Varias citas en un mensaje
+
+A veces el mensaje trae una lista de citas distintas: un calendario de partidos,
+las sesiones de un curso, "el lunes dentista y el jueves la ITV". Eso son varios
+eventos, no uno. Entonces:
+
+- `tipo` es `evento`.
+- En `eventos` va **una entrada por cita**, cada una con su `titulo`, su `cuando`
+  y su `lugar` (o `null` si no se dice).
+- El `titulo` de cada una tiene que distinguirla de las demás y decir de qué va:
+  si son partidos de pádel, "Pádel contra Los Linces", no "Partido 3" ni el
+  título del conjunto.
+- `titulo` y `cuando` de fuera son los del conjunto: un resumen ("Partidos de
+  pádel de octubre") y la fecha de la primera.
+
+Si solo hay una cita, `eventos` va `null` y se usa `cuando` como siempre. Un
+mismo evento con dos horas ("el viernes a las seis, y si no a las siete") es una
+cita, no dos.
+
+`lugar` es el sitio si la nota lo dice ("en la clínica de la calle Mayor", "📍
+Club Norte"); si no, `null`. Vale también para una cita suelta.
+
 ## 4. Etiquetar
 
 De cero a tres etiquetas en `tags`. Palabras sueltas, en minúsculas, sin
@@ -105,7 +127,11 @@ voz" ni "Recordatorio": di de qué va.
 Responde ÚNICAMENTE con un objeto JSON válido, sin texto antes ni después y sin
 vallas de código:
 
-{"tipo": "nota|tarea|evento|pregunta|borrar", "titulo": "...", "limpio": "...", "cuando": null, "tags": [], "busqueda": null}
+{"tipo": "nota|tarea|evento|pregunta|borrar", "titulo": "...", "limpio": "...", "cuando": null, "lugar": null, "eventos": null, "tags": [], "busqueda": null}
+
+Con varias citas, `eventos` es una lista:
+
+"eventos": [{"titulo": "...", "cuando": "YYYY-MM-DDTHH:MM:SS", "lugar": "..."}, ...]
 
 Los saltos de línea dentro de `limpio` van escapados como \n.
 

@@ -164,6 +164,12 @@ Un evento dictado se crea con:
 Una tarea con día (*"recuérdame mañana comprar pan"*) también es algo con fecha, así
 que va al calendario y pasa por los mismos botones que un evento.
 
+Un mensaje con varias citas (el calendario de partidos que te pasan por WhatsApp, las
+sesiones de un curso) son varios eventos. El clasificador las devuelve en `eventos`,
+una por cita y con su lugar, en la misma petición de siempre. Te enseña la lista
+entera con un solo botón de guardar, y si alguna no se puede crear te dice cuál. La
+que venga sin fecha clara se cae de la lista avisando, sin tumbar las demás.
+
 Antes los eventos eran notas con `cuando` relleno. Los que quedaban pendientes se
 pasaron a Google con `05 - Migrar eventos a Google` y en el vault llevan
 `migrado: gcal` y el `gcal_id` del evento. Se quedan ahí como recuerdo, pero ya no
